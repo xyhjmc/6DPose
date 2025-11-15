@@ -187,6 +187,7 @@ def _fallback_move_batch_to_device(batch: Dict[str, Any], device: torch.device) 
     return out
 
 
+
 # ---------------------------
 # 3. 评估器 (Evaluator) 主类
 # ---------------------------
@@ -311,47 +312,62 @@ class Evaluator:
         return None
 
     def _solve_pnp(self, kp3d: np.ndarray, kp2d: np.ndarray, K: np.ndarray) -> Optional[Tuple[np.ndarray, np.ndarray]]:
-        """
-        [智能推理链 2] 从 (kp3d, kp2d, K) 解算 6D 姿态 (R, t)。
-        """
         if kp3d is None or kp2d is None or K is None:
             return None
 
-        # 1. [首选] 尝试我们项目中的 'src.utils.geometry.solve_pnp'
+        R, t = None, None
+
+        # 1. 首选 geometry_mod
         if geometry_mod is not None:
             try:
-                # [接口对齐] 调用我们统一的 solve_pnp 接口
-                # 我们的 solve_pnp 接受 (obj_pts, img_pts, K, ransac=True, **kwargs)
                 out = geometry_mod.solve_pnp(
                     kp3d,
                     kp2d,
                     K,
                     ransac=True,
-                    # [接口对齐] 从 cfg.pnp 读取
                     reproj_thresh=self.cfg.pnp.reproj_error_thresh
                 )
-                if out is None: return None
-                R, t = out[0], out[1]  # (R, t, inliers_mask)
-                return R.astype(np.float32), t.astype(np.float32)
+                if out is not None:
+                    R, t = out[0], out[1]
             except Exception as e:
                 print(f"[Evaluator 警告] 'src.utils.geometry.solve_pnp' 失败: {e}。回退到本地 OpenCV。")
 
-        # 2. [回退] 尝试本地 OpenCV (如果 solve_pnp 不可用或失败)
-        if _HAS_CV2:
-            try:
-                obj, imgp, Kf = kp3d.astype(np.float64), kp2d.astype(np.float64), K.astype(np.float64)
-                success, rvec, tvec, _ = cv2.solvePnPRansac(
-                    obj, imgp, Kf, None,
-                    reprojectionError=float(self.cfg.pnp.reproj_error_thresh),
-                    flags=cv2.SOLVEPNP_EPNP
-                )
-                if not success: return None
-                R, _ = cv2.Rodrigues(rvec)
-                return R.astype(np.float32), tvec.reshape(3, ).astype(np.float32)
-            except Exception as e:
-                print(f"[Evaluator 错误] 本地 OpenCV PnP 回退失败: {e}")
+        # 2. 回退到 OpenCV
+        if R is None or t is None:
+            if _HAS_CV2:
+                try:
+                    obj, imgp, Kf = kp3d.astype(np.float64), kp2d.astype(np.float64), K.astype(np.float64)
+                    success, rvec, tvec, _ = cv2.solvePnPRansac(
+                        obj, imgp, Kf, None,
+                        reprojectionError=float(self.cfg.pnp.reproj_error_thresh),
+                        flags=cv2.SOLVEPNP_EPNP
+                    )
+                    if not success:
+                        return None
+                    R, _ = cv2.Rodrigues(rvec)
+                    t = tvec.reshape(3, )
+                except Exception as e:
+                    print(f"[Evaluator 错误] 本地 OpenCV PnP 回退失败: {e}")
+                    return None
+            else:
+                return None
 
-        return None
+        # 3. ---- 关键：PnP 结果 sanity check ----
+        t = np.asarray(t).reshape(3, )
+        R = np.asarray(R).reshape(3, 3)
+
+        t_norm = float(np.linalg.norm(t))
+        z = float(t[2])
+
+        # ⚠️ 这里的阈值可以按你实际场景微调
+        #   - z: 物体深度，假设在 0.1m ~ 5m 之间（100 ~ 5000 mm）
+        #   - |t|: 平移范数，给个稍小的硬上限防止数值飞起
+        if not (50.0 < z < 5000.0) or t_norm > 6000.0:
+            # 前几次调试时可以打印，确认一下触发情况：
+            # print(f"[PnP WARNING] t 过于异常，视为失败: t={t}, |t|={t_norm}, z={z}")
+            return None
+
+        return R.astype(np.float32), t.astype(np.float32)
 
     def _get_pose_from_output(self,
                               output_gpu: Dict[str, Any],
@@ -409,7 +425,17 @@ class Evaluator:
         # [改进] 优先使用我们项目中的 'move_batch_to_device'
         move_to_device = torch_utils_mod.move_batch_to_device if torch_utils_mod else _fallback_move_batch_to_device
 
+        first_batch = True  # 放到 evaluate() 函数最上面（for batch 之前）
+
         for batch in it:
+
+            if first_batch:
+                print("[DEBUG_BATCH] batch keys:", list(batch.keys()))
+                # 如果 meta 里还有子字段，也可以看一下
+                if 'meta' in batch:
+                    print("[DEBUG_BATCH] meta[0] keys:", batch['meta'][0].keys())
+                first_batch = False
+
             # 1. 将数据移动到 GPU
             batch_gpu = move_to_device(batch, self.device)
 
@@ -432,7 +458,15 @@ class Evaluator:
                     'scene_id': int(batch['meta'][i]['scene_id']),
                     'im_id': int(batch['meta'][i]['im_id']),
                 }
+                kp2d_np = None
+                for k2d_key in ['kp2d', 'kp_2d', 'kpt_2d', 'kpt2d', 'corner_2d', 'corners_2d']:
+                    if k2d_key in batch:
+                        kp2d_np = batch[k2d_key][i].cpu().numpy()
+                        #print(f"[DEBUG_PNP_GT] 使用 GT 2D 字段 '{k2d_key}', 形状={kp2d_np.shape}")
+                        break
 
+                if kp2d_np is not None:
+                    gt['kp2d'] = kp2d_np
                 # 提取第 i 个样本的预测 (在 GPU 上，保持批次维度 [1, ...])
                 pred_gpu = {k: v[i:i + 1] for k, v in outputs_gpu.items()
                             if isinstance(v, torch.Tensor)}
@@ -482,7 +516,11 @@ class Evaluator:
                     't': t_pred if t_pred is not None else np.zeros(3),
                     'score': 1.0 if R_pred is not None else 0.0
                 }
-                gt_dict = {k: v for k, v in gt.items() if k in ['obj_id', 'scene_id', 'im_id', 'R', 't']}
+
+                gt_dict = {
+                    k: v for k, v in gt.items()
+                    if k in ['obj_id', 'scene_id', 'im_id', 'R', 't', 'kp3d', 'kp2d', 'K']
+                }
 
                 all_pred_dicts_for_bop.append(pred_dict)
                 all_gt_dicts_for_bop.append(gt_dict)
@@ -492,60 +530,300 @@ class Evaluator:
         # --- 8. [核心] 聚合与报告 ---
 
         # [首选] 尝试使用我们项目的 BOP 评估器
-        if bop_eval_mod is not None:
-            print(f"评估完成。收集了 {len(all_pred_dicts_for_bop)} 个预测。正在调用 BOP 指标计算...")
+        # if bop_eval_mod is not None:
+        #     # --- 8. 在调用 bop_eval 之前，先做一次本地 ADD/统计 Debug ---
+        #     print("\n[DEBUG] ---- 本地 ADD 统计（不依赖 bop_eval） ----")
+        #     obj_id = int(self.cfg.model.obj_id)
+        #     if obj_id not in self.model_points_lookup:
+        #         print(f"[DEBUG] model_points_lookup 中找不到 obj_id={obj_id}")
+        #     else:
+        #         pts = self.model_points_lookup[obj_id]  # (N,3)
+        #         print(f"[DEBUG] 模型点云统计: N={pts.shape[0]}, "
+        #               f"min={pts.min():.4f}, max={pts.max():.4f}, "
+        #               f"mean_norm={np.linalg.norm(pts, axis=1).mean():.4f}")
+        #
+        #         # 取前 20 个样本做一下简易 ADD 统计
+        #         add_list = []
+        #         t_norm_list = []
+        #         for p, g in zip(all_pred_dicts_for_bop[:20], all_gt_dicts_for_bop[:20]):
+        #             R_pred, t_pred = p['R'], p['t']
+        #             R_gt, t_gt = g['R'], g['t']
+        #
+        #             # 计算平移范数
+        #             t_norm_list.append(float(np.linalg.norm(t_pred)))
+        #
+        #             # 计算 ADD
+        #             add_val = _fallback_add_metric(R_pred, t_pred, R_gt, t_gt, pts)
+        #             add_list.append(add_val)
+        #
+        #         if add_list:
+        #             add_arr = np.array(add_list)
+        #             t_arr = np.array(t_norm_list)
+        #             print(f"[DEBUG] 前 20 个样本 ADD 统计: "
+        #                   f"min={add_arr.min():.4f}, max={add_arr.max():.4f}, mean={add_arr.mean():.4f}")
+        #             print(f"[DEBUG] 前 20 个样本 |t_pred| 范数统计: "
+        #                   f"min={t_arr.min():.4f}, max={t_arr.max():.4f}, mean={t_arr.mean():.4f}")
+        #         print("[DEBUG] ---- 本地 ADD 统计结束 ----\n")
+        #
+        #     print(f"评估完成。收集了 {len(all_pred_dicts_for_bop)} 个预测。正在调用 BOP 指标计算...")
+        #
+        #     # 假设评估器只针对一个物体 ID (来自 config)
+        #     obj_id = int(self.cfg.model.obj_id)
+        #     if obj_id not in self.model_info:
+        #         raise ValueError(f"物体 ID {obj_id} 不在 models_info.json 中。")
+        #
+        #     diameter = self.model_info[obj_id]['diameter']
+        #     is_symmetric = self.model_info[obj_id].get('symmetries_discrete') or \
+        #                    self.model_info[obj_id].get('symmetries_continuous', False)
+        #
+        #     thresholds = {'add': diameter * 0.1}  # 0.1d
+        #
+        #     # [修复] 调用我们 bop_eval.py 的正确接口
+        #     # 它不接受 'use_adds_for_symmetric'
+        #     results = bop_eval_mod.evaluate_batch(
+        #         predictions=all_pred_dicts_for_bop,
+        #         gts=all_gt_dicts_for_bop,
+        #         model_points_lookup=self.model_points_lookup,
+        #         thresholds=thresholds
+        #         # (use_adds_for_symmetric 参数已被移除)
+        #     )
+        #     summary = results.get('summary', {})
+        #
+        #     # [修复] 手动选择正确的指标进行报告
+        #     # bop_eval.py 返回了 avg_add 和 avg_adds
+        #     if is_symmetric:
+        #         final_metric_key = 'pass_rate_adds'
+        #         final_avg_err_key = 'avg_adds'
+        #         metric_name = "ADD-S@0.1d"
+        #     else:
+        #         final_metric_key = 'pass_rate_add'
+        #         final_avg_err_key = 'avg_add'
+        #         metric_name = "ADD@0.1d"
+        #
+        #     final_summary = {
+        #         "obj_id": obj_id,
+        #         "is_symmetric": is_symmetric,
+        #         "metric": metric_name,
+        #         "threshold_mm": thresholds['add'],
+        #         "recall": summary.get(final_metric_key, 0.0),
+        #         "avg_error_mm": summary.get(final_avg_err_key, 0.0),
+        #         "total_instances": summary.get('n', 0)
+        #     }
+        #
+        # else:
+        #     # [回退] 使用本地的轻量级度量
+        #     print("[Evaluator 警告] 'src.metrics.bop_eval' 未找到。回退到轻量级本地摘要。")
+        #     final_summary = self._fallback_summarize(all_pred_dicts_for_bop, all_gt_dicts_for_bop)
+                # 实验 B：GT kp2d + PnP
+        self._debug_pnp_with_gt_kp2d(all_gt_dicts_for_bop, max_samples=200)
 
-            # 假设评估器只针对一个物体 ID (来自 config)
-            obj_id = int(self.cfg.model.obj_id)
-            if obj_id not in self.model_info:
-                raise ValueError(f"物体 ID {obj_id} 不在 models_info.json 中。")
-
-            diameter = self.model_info[obj_id]['diameter']
-            is_symmetric = self.model_info[obj_id].get('symmetries_discrete') or \
-                           self.model_info[obj_id].get('symmetries_continuous', False)
-
-            thresholds = {'add': diameter * 0.1}  # 0.1d
-
-            # [修复] 调用我们 bop_eval.py 的正确接口
-            # 它不接受 'use_adds_for_symmetric'
-            results = bop_eval_mod.evaluate_batch(
-                predictions=all_pred_dicts_for_bop,
-                gts=all_gt_dicts_for_bop,
-                model_points_lookup=self.model_points_lookup,
-                thresholds=thresholds
-                # (use_adds_for_symmetric 参数已被移除)
-            )
-            summary = results.get('summary', {})
-
-            # [修复] 手动选择正确的指标进行报告
-            # bop_eval.py 返回了 avg_add 和 avg_adds
-            if is_symmetric:
-                final_metric_key = 'pass_rate_adds'
-                final_avg_err_key = 'avg_adds'
-                metric_name = "ADD-S@0.1d"
-            else:
-                final_metric_key = 'pass_rate_add'
-                final_avg_err_key = 'avg_add'
-                metric_name = "ADD@0.1d"
-
-            final_summary = {
-                "obj_id": obj_id,
-                "is_symmetric": is_symmetric,
-                "metric": metric_name,
-                "threshold_mm": thresholds['add'],
-                "recall": summary.get(final_metric_key, 0.0),
-                "avg_error_mm": summary.get(final_avg_err_key, 0.0),
-                "total_instances": summary.get('n', 0)
-            }
-
-        else:
-            # [回退] 使用本地的轻量级度量
-            print("[Evaluator 警告] 'src.metrics.bop_eval' 未找到。回退到轻量级本地摘要。")
-            final_summary = self._fallback_summarize(all_pred_dicts_for_bop, all_gt_dicts_for_bop)
+        self._debug_add_gt_vs_gt(all_gt_dicts_for_bop, max_samples=50)
+        final_summary = self._local_bop_like_eval(all_pred_dicts_for_bop, all_gt_dicts_for_bop)
 
         print("\n--- 评估结果 (Summary) ---")
         print(json.dumps(final_summary, indent=2))
         return final_summary
+    def _debug_add_gt_vs_gt(self, gts: List[Dict[str, Any]], max_samples: int = 50):
+        """
+        实验 A：用 GT 的 (R_gt, t_gt) 和自己算 ADD，理论上应该接近 0。
+        用来检查：model_points 的尺度 / 坐标系 / ADD 实现 是否一致。
+        """
+        obj_id = int(self.cfg.model.obj_id)
+        if obj_id not in self.model_points_lookup:
+            print(f"[DEBUG_GT] model_points_lookup 中找不到 obj_id={obj_id}")
+            return
+
+        pts = self.model_points_lookup[obj_id]   # (N,3)
+
+        add_vals = []
+        t_norms = []
+
+        for g in gts[:max_samples]:
+            if g['obj_id'] != obj_id:
+                continue
+
+            R_gt = g['R']
+            t_gt = g['t']
+
+            # 用同一个 GT 姿态做 ADD
+            add_val = _fallback_add_metric(R_gt, t_gt, R_gt, t_gt, pts)
+            add_vals.append(add_val)
+
+            t_norms.append(float(np.linalg.norm(t_gt)))
+
+        if not add_vals:
+            print("[DEBUG_GT] 没有匹配 obj_id 的 GT 样本，无法做 GT vs GT 检查。")
+            return
+
+        add_arr = np.array(add_vals)
+        t_arr = np.array(t_norms)
+
+        print("\n[DEBUG_GT] ==== 实验 A：GT vs GT ADD 检查 ====")
+        print(f"[DEBUG_GT] 使用样本数: {len(add_arr)}")
+        print(f"[DEBUG_GT] GT |t_gt| 统计: min={t_arr.min():.4f}, "
+              f"max={t_arr.max():.4f}, mean={t_arr.mean():.4f}")
+        print(f"[DEBUG_GT] ADD(R_gt,t_gt; R_gt,t_gt) 统计: "
+              f"min={add_arr.min():.6e}, max={add_arr.max():.6e}, "
+              f"mean={add_arr.mean():.6e}")
+        print("[DEBUG_GT] 理论上这三个值都应该非常接近 0，如果不是，则说明 ADD/坐标系存在问题。\n")
+
+    def _debug_pnp_with_gt_kp2d(self, gts: List[Dict[str, Any]], max_samples: int = 100):
+        """
+        实验 B：用 GT 的 (kp3d, kp2d, K) 通过当前的 `_solve_pnp` 解一次，
+        看能恢复多接近 GT 的 (R_gt, t_gt)。
+
+        如果这个实验的 ADD 很小 → PnP 没问题，问题主要在关键点预测 / RANSAC。
+        如果这个实验的 ADD 也很大 → PnP 管线有问题（坐标系 / 单位 / sanity check 等）。
+        """
+        obj_id = int(self.cfg.model.obj_id)
+        if obj_id not in self.model_points_lookup:
+            print(f"[DEBUG_PNP_GT] model_points_lookup 中找不到 obj_id={obj_id}")
+            return
+
+        pts = self.model_points_lookup[obj_id]
+        diameter = self.model_info[obj_id]['diameter']
+        thr = 0.1 * diameter
+
+        add_list = []
+        re_list = []
+        te_list = []
+        n_total = 0
+        n_success = 0
+
+        for g in gts[:max_samples]:
+            if g['obj_id'] != obj_id:
+                continue
+            if 'kp2d' not in g:
+                continue
+
+            n_total += 1
+
+            kp3d = g['kp3d']
+            kp2d_gt = g['kp2d']
+            K = g['K']
+            R_gt = g['R']
+            t_gt = g['t']
+
+            # 用和预测时完全一样的 PnP 函数
+            out = self._solve_pnp(kp3d, kp2d_gt, K)
+            if out is None:
+                continue
+            R_pnp, t_pnp = out
+            n_success += 1
+
+            # 旋转 / 平移误差
+            re = _fallback_rotation_error_deg(R_pnp, R_gt)
+            te = _fallback_translation_error(t_pnp, t_gt)
+            re_list.append(re)
+            te_list.append(te)
+
+            # ADD 误差
+            add_val = _fallback_add_metric(R_pnp, t_pnp, R_gt, t_gt, pts)
+            add_list.append(add_val)
+
+        print("\n[DEBUG_PNP_GT] ==== 实验 B：GT kp2d + PnP 检查 ====")
+        print(f"[DEBUG_PNP_GT] 总共尝试样本数(前 {max_samples}): {n_total}")
+        print(f"[DEBUG_PNP_GT] PnP 成功解出的样本数: {n_success}")
+
+        if not add_list:
+            print("[DEBUG_PNP_GT] 没有成功的样本，说明 PnP 经常被 sanity check 判为失败，"
+                  "可以考虑暂时放宽 _solve_pnp 里的 z 范围 / t_norm 上限再试一次。")
+            return
+
+        add_arr = np.array(add_list)
+        re_arr = np.array(re_list)
+        te_arr = np.array(te_list)
+
+        print(f"[DEBUG_PNP_GT] 旋转误差 re(deg): min={re_arr.min():.4f}, "
+              f"max={re_arr.max():.4f}, mean={re_arr.mean():.4f}")
+        print(f"[DEBUG_PNP_GT] 平移误差 te(mm): min={te_arr.min():.4f}, "
+              f"max={te_arr.max():.4f}, mean={te_arr.mean():.4f}")
+        print(f"[DEBUG_PNP_GT] ADD(R_pnp,t_pnp; R_gt,t_gt): "
+              f"min={add_arr.min():.4f}, max={add_arr.max():.4f}, mean={add_arr.mean():.4f}")
+        print(f"[DEBUG_PNP_GT] 其中 ADD<{thr:.3f} 的比例 (理论上类似 ADD-0.1d 上限): "
+              f"{(add_arr < thr).mean():.4f}")
+        print("[DEBUG_PNP_GT] 如果这里的 ADD 很小，说明 PnP 管线是健康的；"
+              "反之则需要优先检查 PnP / 坐标系 / 单位。")
+
+    def _local_bop_like_eval(self, predictions: List[Dict], gts: List[Dict]) -> Dict[str, Any]:
+        obj_id = int(self.cfg.model.obj_id)
+        if obj_id not in self.model_points_lookup:
+            raise ValueError(f"model_points_lookup 中找不到 obj_id={obj_id}")
+
+        pts = self.model_points_lookup[obj_id]
+        diameter = self.model_info[obj_id]['diameter']
+        thr = 0.1 * diameter
+
+        adds = []
+        bad_indices = []  # 存储疑似炸掉的样本 index
+        t_norms = []
+
+        for idx, (p, g) in enumerate(zip(predictions, gts)):
+            if p['obj_id'] != obj_id:
+                continue
+            if p['score'] == 0.0:
+                continue
+
+            R_pred, t_pred = p['R'], p['t']
+            R_gt, t_gt = g['R'], g['t']
+
+            add_val = _fallback_add_metric(R_pred, t_pred, R_gt, t_gt, pts)
+            adds.append(add_val)
+
+            t_norm = float(np.linalg.norm(t_pred))
+            t_norms.append(t_norm)
+
+            # 如果 ADD 或 |t| 特别夸张，记录下来
+            if add_val > 1e6 or t_norm > 1e6:
+                bad_indices.append((idx, add_val, t_norm))
+
+        # ---- Debug 打印 ----
+        if adds:
+            adds_arr = np.array(adds)
+            t_arr = np.array(t_norms)
+            print(f"[DEBUG_LOCAL] 全部有效样本 ADD 统计: "
+                  f"min={adds_arr.min():.4f}, max={adds_arr.max():.4e}, mean={adds_arr.mean():.4e}")
+            print(f"[DEBUG_LOCAL] 全部有效样本 |t_pred| 统计: "
+                  f"min={t_arr.min():.4f}, max={t_arr.max():.4e}, mean={t_arr.mean():.4e}")
+
+            if bad_indices:
+                print(f"[DEBUG_LOCAL] 发现 {len(bad_indices)} 个疑似炸掉的样本 (ADD>1e6 或 |t|>1e6)，列出前 5 个:")
+                for i, (idx, add_val, t_norm) in enumerate(bad_indices[:5]):
+                    p = predictions[idx]
+                    g = gts[idx]
+                    print(f"  - idx={idx}, ADD={add_val:.4e}, |t_pred|={t_norm:.4e}, "
+                          f"scene_id={p['scene_id']}, im_id={p['im_id']}")
+                    print(f"    R_pred:\n{p['R']}")
+                    print(f"    t_pred: {p['t']}")
+                    print(f"    R_gt:\n{g['R']}")
+                    print(f"    t_gt: {g['t']}")
+        else:
+            print("[DEBUG_LOCAL] 没有有效预测 (adds 为空)。")
+
+        # ---- 正常的统计逻辑 ----
+        if not adds:
+            return {
+                "obj_id": obj_id,
+                "metric": "ADD@0.1d_local",
+                "threshold_mm": thr,
+                "recall": 0.0,
+                "avg_error_mm": float('nan'),
+                "total_instances": 0
+            }
+
+        adds_arr = np.array(adds)
+        recall = float((adds_arr < thr).mean())
+        avg_err = float(adds_arr.mean())
+
+        return {
+            "obj_id": obj_id,
+            "metric": "ADD@0.1d_local",
+            "threshold_mm": thr,
+            "recall": recall,
+            "avg_error_mm": avg_err,
+            "total_instances": int(len(adds_arr))
+        }
+
 
     def _fallback_summarize(self, predictions: List[Dict], gts: List[Dict]) -> Dict[str, Any]:
         """ [回退摘要] (如果 bop_eval.py 不可用) """
