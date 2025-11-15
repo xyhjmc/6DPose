@@ -1,0 +1,23 @@
+# 忽略数据集目录
+data/
+*.zip
+*.rar
+*.7z
+*.ply
+
+# 忽略模型权重
+checkpoints/
+*.pth
+*.pt
+*.onnx
+
+# 忽略临时文件
+__pycache__/
+*.pyc
+*.log
+
+# 忽略env
+venv/
+env/
+*.swp
+.idea/

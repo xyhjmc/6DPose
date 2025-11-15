@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="381a7172-5ab5-4041-a888-6e83040e4971" name="更改" comment="首次提交">
+      <change afterPath="$PROJECT_DIR$/.gitignore " afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/.gitignore" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/6DPose.iml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/Project_Default.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/profiles_settings.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/configs/config.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/configs/default.yaml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/configs/pvnet_linemod_driller.yaml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/configs/pvnet_linemod_driller_less.yaml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/configs/pvnet_linemod_driller_less_old.yaml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/configs/pvnet_linemod_driller_more.yaml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/configs/pvnet_linemod_driller_not_pbr.yaml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/datasets/bop_pvnet_dataset.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/datasets/transforms.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/debug.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/debug_full_pipeline.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/debug_viz.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/eval_pvnet.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/engines/evaluator.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/engines/evaluator_new.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/engines/trainer.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/losses/alternate_losses.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/losses/pvnet/pvnet_loss.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/metrics/bop_eval.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/models/pvnet/PVNet.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/models/pvnet/resnet.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/utils/geometry.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/utils/mesh.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/utils/ransac_voting.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/utils/torch_utils.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/utils/train_model_utils.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/utils/viz.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/strcuture" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tools/prepare_pvnet_data.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/train_pvnet.py" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Python Script" />
+      </list>
+    </option>
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="GitHubPullRequestSearchHistory"><![CDATA[{
+  "lastFilter": {
+    "state": "OPEN",
+    "assignee": "xyhjmc"
+  }
+}]]></component>
+  <component name="GithubPullRequestsUISettings"><![CDATA[{
+  "selectedUrlAndAccountId": {
+    "url": "https://github.com/xyhjmc/6DPose.git",
+    "accountId": "f129b1d2-4cc3-4a55-8968-1a881022af0d"
+  }
+}]]></component>
+  <component name="HighlightingSettingsPerFile">
+    <setting file="file://$PROJECT_DIR$/src/utils/torch_utils.py" root0="FORCE_HIGHLIGHTING" />
+  </component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 2
+}</component>
+  <component name="ProjectId" id="35P80gyAlhqBCUEk0jKeyGz5glA" />
+  <component name="ProjectLevelVcsManager" settingsEditedManually="true" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "Python.bop_eval.executor": "Run",
+    "Python.bop_pvnet_dataset.executor": "Run",
+    "Python.config.executor": "Run",
+    "Python.debug.executor": "Run",
+    "Python.debug_full_pipeline.executor": "Run",
+    "Python.debug_viz.executor": "Run",
+    "Python.eval_pvnet.executor": "Run",
+    "Python.evaluator.executor": "Run",
+    "Python.geometry.executor": "Run",
+    "Python.mesh.executor": "Run",
+    "Python.prepare_pvnet_data.executor": "Run",
+    "Python.pvnet.executor": "Run",
+    "Python.pvnet_loss.executor": "Run",
+    "Python.ransac_voting.executor": "Run",
+    "Python.torch_utils.executor": "Run",
+    "Python.train_pvnet.executor": "Run",
+    "Python.trainer.executor": "Run",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "git-widget-placeholder": "master",
+    "last_opened_file_path": "/home/xyh/PycharmProjects/6DPose/src/engines",
+    "settings.editor.selected.configurable": "preferences.pluginManager"
+  }
+}]]></component>
+  <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/src/engines" />
+      <recent name="$PROJECT_DIR$/configs" />
+      <recent name="$PROJECT_DIR$/data/linemod_pvnet" />
+    </key>
+    <key name="MoveFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/src" />
+    </key>
+  </component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-python-sdk-14705d77f0bb-aa17d162503b-com.jetbrains.pycharm.community.sharedIndexes.bundled-PC-243.25659.43" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="SpellCheckerSettings" RuntimeDictionaries="0" Folders="0" CustomDictionaries="0" DefaultDictionary="应用程序级" UseSingleDictionary="true" transferred="true" />
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="默认任务">
+      <changelist id="381a7172-5ab5-4041-a888-6e83040e4971" name="更改" comment="" />
+      <created>1763000124917</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1763000124917</updated>
+    </task>
+    <servers />
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="?" />
+    <MESSAGE value="首次提交" />
+    <option name="LAST_COMMIT_MESSAGE" value="首次提交" />
+  </component>
+</project>

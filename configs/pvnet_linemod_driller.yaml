@@ -1,0 +1,92 @@
+# configs/pvnet_linemod_ape.yaml
+#
+# 训练 LINEMOD 'ape' (obj_id 1) 的特定配置
+#
+# 它会自动继承 'default.yaml' 的所有设置，
+# 并覆盖以下特定于本实验的参数。
+
+# [关键] 指定继承自 default.yaml
+# (这是一种常见的约定，具体实现取决于我们的 config.py)
+defaults:
+  - default
+
+# --- 覆盖：路径设置 ---
+run:
+  log_dir: "./logs/pvnet_linemod_driller"
+  checkpoint_dir: "./checkpoints/pvnet_linemod_driller"
+
+# --- 覆盖：数据集路径 ---
+dataset:
+  # (假设 'ape' 的训练和验证 .npz 都在同一个目录)
+  train_data_dir: "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet/driller"
+  val_data_dir: "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet/driller_test"
+  num_workers: 8
+  pin_memory: true
+
+  loader:
+    batch_size: 8
+    shuffle: true
+    drop_last: true
+# --- 覆盖：模型参数 (如果需要) ---
+# --- 3. 数据增强与变换 ---
+transforms:
+  # [关键] 必须与 prepare_bop_dataset_pro.py 的设置匹配
+  use_offset: true # (用于 SmoothL1Loss)
+
+  input_size_hw: [480, 640] # (H, W)
+
+  augmentation:
+    degrees: 30.0
+    scale_range: [0.8, 1.2]
+    flip_p: 0.5
+
+  color_jitter:
+    brightness: 0.2
+    contrast: 0.2
+    saturation: 0.2
+
+  mean: [0.485, 0.456, 0.406]
+  std: [0.229, 0.224, 0.225]
+
+# --- 4. 模型参数 ---
+model:
+  name: "PVNet"
+  num_keypoints: 9
+  ver_dim: 18 # (num_keypoints * 2)
+  seg_dim: 2  # (背景, 前景)
+
+# (ape 是 LINEMOD 的 obj_id 1)
+# (我们的 prepare...pro.py 脚本需要这个 ID 来匹配)
+
+  obj_id: 8
+  ransac_voting:
+    vote_num: 512
+    inlier_thresh: 2.0
+    max_trials: 200
+
+# --- 5. 损失函数参数 ---
+loss:
+  seg_weight: 1.0
+  vote_weight: 1.0
+
+# --- 6. 优化器 ---
+optimizer:
+  type: "Adam"
+  lr: 0.001
+  weight_decay: 0.0
+
+# --- 7. 学习率调度器 ---
+scheduler:
+  type: "MultiStepLR"
+  milestones: [60, 80]
+  gamma: 0.1
+
+# --- 8. 训练引擎参数 ---
+train:
+  max_epochs: 100
+  use_amp: true
+  log_interval: 50
+
+# --- 9. 评估器参数 ---
+pnp:
+  reproj_error_thresh: 3.0

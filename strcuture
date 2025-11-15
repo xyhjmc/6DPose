@@ -1,0 +1,38 @@
+your_project/
+├─ README.md
+├─ pyproject.toml / setup.py
+├─ Dockerfile
+├─ configs/                       # 配置（YAML / Hydraconf）
+│  ├─ default.yaml
+│  └─ pvnet.yaml
+├─ data/                          # 原始/下载的数据（不放 git）
+├─ datasets/                      # 数据集定义 + loader + transforms
+│  ├─ bop/                        # BOP 格式适配器
+│  ├─ custom_dataset.py
+│  └─ transforms.py
+├─ tools/                         # 预处理、渲染、合成等脚本
+│  ├─ preprocess_bop.py
+│  ├─ synth_data.py
+│  └─ create_mesh_cache.py
+├─ src/
+│  ├─ models/                     # 各模型实现
+│  │  ├─ base.py
+│  │  ├─ pvnet.py
+│  │  └─ yolo_pose.py
+│  ├─ losses/                      # 损失函数集合
+│  │  ├─ pose_losses.py
+│  │  └─ geom_losses.py
+│  ├─ metrics/                     # 评估（BOP metrics: VSD, ADD(-S), MSSD...）
+│  │  └─ bop_eval.py
+│  ├─ engines/                     # 训练/评估/推理主循环
+│  │  ├─ trainer.py
+│  │  └─ evaluator.py
+│  ├─ utils/                       # 工具函数（IO、logging、seeds、config helpers）
+│  │  ├─ viz.py
+│  │  ├─ io.py
+│  │  └─ camera.py                 # 深度->点云、相机内参相关
+│  └─ third_party/                 # 原始 C++ 项目或已转换代码（临时）
+├─ experiments/                    # 训练脚本 & slurm / sbatch 模板
+│  └─ run_pvnet.sh
+├─ notebooks/                       # 分析/可视化笔记本
+└─ tests/                           # 单元/集成测试
