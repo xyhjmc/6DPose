@@ -81,10 +81,13 @@ class PVNetPlus(nn.Module):
         backbone = backbone.lower()
         if backbone == "resnet18":
             base = resnet18
+            block_expansion = 1
         elif backbone == "resnet34":
             base = resnet34
+            block_expansion = 1
         elif backbone == "resnet50":
             base = resnet50
+            block_expansion = 4
         else:
             raise ValueError(f"Unsupported backbone for PVNetPlus: {backbone}")
 
@@ -101,15 +104,19 @@ class PVNetPlus(nn.Module):
         )
         self.encoder = encoder
 
+        # 跳连特征通道数随 backbone 变化（ResNet18/34 使用 BasicBlock，ResNet50 使用 Bottleneck）
+        x4s_channels = 64 * block_expansion
+        x8s_channels = 128 * block_expansion
+
         # FPN 解码器 + 注意力
         self.conv8s = nn.Sequential(
-            nn.Conv2d(128 + fcdim, s8dim, 3, padding=1, bias=False),
+            nn.Conv2d(x8s_channels + fcdim, s8dim, 3, padding=1, bias=False),
             nn.BatchNorm2d(s8dim),
             nn.LeakyReLU(0.1, inplace=True),
             SEBlock(s8dim),
         )
         self.conv4s = nn.Sequential(
-            nn.Conv2d(64 + s8dim, s4dim, 3, padding=1, bias=False),
+            nn.Conv2d(x4s_channels + s8dim, s4dim, 3, padding=1, bias=False),
             nn.BatchNorm2d(s4dim),
             nn.LeakyReLU(0.1, inplace=True),
             ContextBlock(s4dim, dilation=ctx_dilation),
