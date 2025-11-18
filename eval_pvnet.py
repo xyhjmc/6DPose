@@ -25,8 +25,8 @@ from debug_full_pipeline import run_full_debug
 # --- 1. 导入我们所有的自定义模块 ---
 # 配置加载器
 from configs.config import load_config
-# 模型
-from src.models.pvnet.PVNet import PVNet
+# 模型工厂（支持 PVNet / PVNetPlus）
+from src.models.pvnet.factory import build_model_from_cfg
 # 数据集
 from datasets.bop_pvnet_dataset import BopPvnetDataset, pvnet_collate_fn
 # 数据增强
@@ -112,14 +112,7 @@ def main():
     # --- 5. 模型 (Model) ---
     # [接口对齐]
     print(f"初始化模型: {cfg.model.name}")
-    model = PVNet(
-        ver_dim=cfg.model.ver_dim,
-        seg_dim=cfg.model.seg_dim,
-        # 传入 RANSAC 投票参数 (供 Evaluator 内部使用)
-        vote_num=cfg.model.ransac_voting.vote_num,
-        inlier_thresh=cfg.model.ransac_voting.inlier_thresh,
-        max_trials=cfg.model.ransac_voting.max_trials
-    )
+    model = build_model_from_cfg(cfg)
     model.to(device)
 
     # --- 6. [核心] 加载训练好的权重 ---

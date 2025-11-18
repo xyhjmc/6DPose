@@ -1,0 +1,77 @@
+# PVNetPlus 针对 LINEMOD driller 的示例配置
+# 继承 default.yaml，并切换模型为 PVNetPlus（更强的 backbone 和解码器宽度）。
+
+defaults:
+  - default
+
+run:
+  log_dir: "./logs/pvnetplus_linemod_driller_all"
+  checkpoint_dir: "./checkpoints/pvnetplus_linemod_driller_all"
+
+dataset:
+  data_root: "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet"
+  train_data_dir: "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet/driller_all"
+  val_data_dir: "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet/driller_test"
+  num_workers: 8
+  pin_memory: true
+  loader:
+    batch_size: 8
+    shuffle: true
+    drop_last: true
+
+transforms:
+  use_offset: True
+  input_size_hw: [480, 640]
+  augmentation:
+    degrees: 25
+    scale_range: [0.9, 1.1]
+    flip_p: 0.2
+  color_jitter:
+    brightness: 0.3
+    contrast: 0.25
+    saturation: 0.25
+  mean: [0.485, 0.456, 0.406]
+  std: [0.229, 0.224, 0.225]
+
+model:
+  name: "PVNetPlus"
+  backbone: "resnet34"
+  num_keypoints: 9
+  ver_dim: 18
+  seg_dim: 2
+  vertex_scale: 100.0
+  obj_id: 8
+  plus:
+    fcdim: 512
+    s8dim: 256
+    s4dim: 128
+    s2dim: 64
+    raw_dim: 64
+    ctx_dilation: 3
+    dropout: 0.1
+  ransac_voting:
+    vote_num: 1280
+    inlier_thresh: 3.0
+    max_trials: 320
+
+loss:
+  seg_weight: 0.5
+  vote_weight: 3.5
+
+optimizer:
+  type: "Adam"
+  lr: 0.001
+  weight_decay: 0.0001
+
+scheduler:
+  type: "MultiStepLR"
+  milestones: [24, 30]
+  gamma: 0.1
+
+train:
+  max_epochs: 36
+  use_amp: true
+  log_interval: 25
+
+pnp:
+  reproj_error_thresh: 10
