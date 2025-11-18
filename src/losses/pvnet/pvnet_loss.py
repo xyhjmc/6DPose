@@ -1,4 +1,4 @@
-# src/losses/pvnet_loss.py
+# src/losses//pvnet/pvnet_loss.py
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

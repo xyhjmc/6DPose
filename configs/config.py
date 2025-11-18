@@ -187,7 +187,7 @@ if __name__ == "__main__":
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     cfg_dir = os.path.join(here, "configs")
     example_default = os.path.join(cfg_dir, "default.yaml")
-    example_exp = os.path.join(cfg_dir, "pvnet_linemod_driller.yaml")
+    example_exp = os.path.join(cfg_dir, "pvnet_linemod_driller_less.yaml")
 
     print("示例 config 目录:", cfg_dir)
     if os.path.exists(example_default) and os.path.exists(example_exp):

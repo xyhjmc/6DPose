@@ -200,7 +200,8 @@ class Evaluator:
                  device: torch.device,
                  cfg: Any,  # 完整的配置命名空间
                  out_dir: Optional[str] = None,
-                 verbose: bool = True):
+                 verbose: bool = True,
+                                  ):
         """
         初始化评估器。
 
@@ -218,6 +219,7 @@ class Evaluator:
         self.cfg = cfg
         self.out_dir = out_dir
         self.verbose = verbose
+        self.vertex_scale = cfg.model.vertex_scale
 
         if self.out_dir:
             os.makedirs(self.out_dir, exist_ok=True)
@@ -271,45 +273,63 @@ class Evaluator:
 
     def _decode_kp2d_from_output(self, output_gpu: Dict[str, Any]) -> Optional[np.ndarray]:
         """
-        只使用 PVNet 正统的 vertex + seg + RANSAC 解码。
-        禁用辅助 kpt_2d 预测（它没有监督，质量极差）
+        使用 PVNet 正统的 vertex + seg + RANSAC 解码 2D 关键点。
+
+        注意：
+        - vertex 在 NormalizeAndToTensor 中被 / vertex_scale 过，
+          这里要乘回 self.vertex_scale，恢复到“像素偏移”尺度；
+        - mask 解码与 PVNet.forward / 实验 E 保持一致：
+          * seg_dim == 1: sigmoid > 0.5
+          * seg_dim >  1: argmax 通道作为前景
         """
 
-        # 1. PVNet vertex + seg → RANSAC (主路径)
-        if 'vertex' in output_gpu and 'seg' in output_gpu:
-            if ransac_voting_mod is None:
-                print("[Evaluator 警告] 'ransac_voting' 未找到")
-                return None
+        # 1. 必须有 'vertex' 和 'seg'
+        if 'vertex' not in output_gpu or 'seg' not in output_gpu:
+            return None
+        if ransac_voting_mod is None:
+            print("[Evaluator 警告] 'ransac_voting' 未找到，无法从 vertex/seg 解码 kp2d")
+            return None
 
-            vt, seg = output_gpu['vertex'], output_gpu['seg']
-            scale = getattr(self.cfg.model, 'vertex_scale', 1.0)
-            vt = vt * scale
+        # 2. 取出预测的顶点场和分割 logits
+        vertex_pred = output_gpu['vertex']  # (B, 2K, H, W)，此时是 /vertex_scale 的“归一化空间”
+        seg_pred = output_gpu['seg']  # (B, C_seg, H, W)
 
-            # mask decode
-            if seg.shape[1] > 1:
-                mask_pred = (torch.softmax(seg, dim=1)[:, 1] > 0.5).float()
-            else:
-                mask_pred = (torch.sigmoid(seg[:, 0]) > 0.5).float()
+        # 3. 还原 vertex 到“像素偏移”尺度
+        scale = float(getattr(self, "vertex_scale", 1.0))
+        vertex_px = vertex_pred * scale  # (B, 2K, H, W)
 
-            try:
-                kp2d, _ = ransac_voting_mod.ransac_voting(
-                    mask=mask_pred,
-                    vertex=vt,
-                    num_votes=self.cfg.model.ransac_voting.vote_num,
-                    inlier_thresh=self.cfg.model.ransac_voting.inlier_thresh,
-                    max_trials=self.cfg.model.ransac_voting.max_trials
-                )
-                return np.squeeze(kp2d.detach().cpu().numpy()).astype(np.float32)
-            except Exception as e:
-                print(f"[Evaluator 错误] RANSAC 解码失败: {e}")
-                return None
+        # 4. 解码二值 mask（与 PVNet.decode_keypoint 逻辑对齐）
+        if seg_pred.shape[1] == 1:
+            # 单通道：BCE 情况，用 sigmoid > 0.5
+            # seg_pred: (B, 1, H, W)
+            mask_bin = (torch.sigmoid(seg_pred) > 0.5).float()  # (B, 1, H, W)
+        else:
+            # 多通道：CrossEntropy 情况，直接取 argmax
+            # seg_pred: (B, C_seg, H, W)
+            # argmax 结果是 (B, H, W)，1 代表前景、0 代表背景
+            mask_bin = torch.argmax(seg_pred, dim=1, keepdim=True).float()  # (B, 1, H, W)
 
-        # 2. 禁用辅助 kpt_2d（避免 PN P 炸掉）
-        # for key in ['kpt_2d', 'kp_2d', 'kp2d']:
-        #     if key in output_gpu:
-        #         return np.squeeze(output_gpu[key].detach().cpu().numpy()).astype(np.float32)
+        try:
+            # 5. 调用统一 ransac_voting 接口（torch 版，跑在 GPU）
+            #   mask_bin:   (B, 1, H, W)
+            #   vertex_px:  (B, 2K, H, W)
+            kpts2d_t, inlier_counts = ransac_voting_mod.ransac_voting(
+                mask=mask_bin,
+                vertex=vertex_px,
+                num_votes=self.cfg.model.ransac_voting.vote_num,
+                inlier_thresh=self.cfg.model.ransac_voting.inlier_thresh,
+                max_trials=self.cfg.model.ransac_voting.max_trials
+            )
 
-        return None
+            # 6. 转为 numpy，去掉 batch 维度 → (K, 2)
+            kp2d_np = kpts2d_t.detach().cpu().numpy().astype(np.float32)  # (B, K, 2)
+            kp2d_np = np.squeeze(kp2d_np, axis=0)  # 这里 B=1，所以 squeeze 掉 batch 维
+
+            return kp2d_np
+
+        except Exception as e:
+            print(f"[Evaluator 错误] RANSAC 解码失败: {e}")
+            return None
 
     def _solve_pnp(self, kp3d: np.ndarray, kp2d: np.ndarray, K: np.ndarray) -> Optional[Tuple[np.ndarray, np.ndarray]]:
         if kp3d is None or kp2d is None or K is None:
@@ -470,7 +490,8 @@ class Evaluator:
                 # 提取第 i 个样本的预测 (在 GPU 上，保持批次维度 [1, ...])
                 pred_gpu = {k: v[i:i + 1] for k, v in outputs_gpu.items()
                             if isinstance(v, torch.Tensor)}
-
+                # 解码预测的 2D 关键点（用于后续 PnP debug）
+                kp2d_pred_np = self._decode_kp2d_from_output(pred_gpu)
                 # 4. [改进] 调用重构后的“智能推理链”
                 # --- DEBUG START: 仅打印前 3 个样本 ---
                 if len(all_pred_dicts_for_bop) < 3:
@@ -485,10 +506,9 @@ class Evaluator:
                     # 2. 检查预测的 2D 点 (kp2d_pred)
                     # 我们需要手动调用一次解码来看看中间结果
                     kp2d_debug = self._decode_kp2d_from_output(pred_gpu)
-                    if kp2d_debug is not None:
-                        print(f"  > Pred kp2d (前3个): \n{kp2d_debug[:3]}")
-                        print(f"  > Pred kp2d 范围: min={kp2d_debug.min():.2f}, max={kp2d_debug.max():.2f}")
-                        # 正常情况: 应该在 0 到 640/480 之间。如果出现 -1000 或 +10000 就是 RANSAC 炸了
+                    if kp2d_pred_np is not None:
+                        print(f"  > Pred kp2d (前3个): \n{kp2d_pred_np[:3]}")
+                        print(f"  > Pred kp2d 范围: min={kp2d_pred_np.min():.2f}, max={kp2d_pred_np.max():.2f}")
                     else:
                         print("  > Pred kp2d: 解码失败 (None)")
 
@@ -516,7 +536,8 @@ class Evaluator:
                     't': t_pred if t_pred is not None else np.zeros(3),
                     'score': 1.0 if R_pred is not None else 0.0
                 }
-
+                if kp2d_pred_np is not None:
+                    pred_dict['kp2d_pred'] = kp2d_pred_np
                 gt_dict = {
                     k: v for k, v in gt.items()
                     if k in ['obj_id', 'scene_id', 'im_id', 'R', 't', 'kp3d', 'kp2d', 'K']
@@ -618,6 +639,11 @@ class Evaluator:
         self._debug_pnp_with_gt_kp2d(all_gt_dicts_for_bop, max_samples=200)
 
         self._debug_add_gt_vs_gt(all_gt_dicts_for_bop, max_samples=50)
+
+        self._debug_pnp_with_pred_kp2d(all_pred_dicts_for_bop, all_gt_dicts_for_bop, max_samples=200)
+        self._debug_kp2d_pred_vs_gt(all_pred_dicts_for_bop, all_gt_dicts_for_bop, max_samples=200)
+        self._debug_ransac_with_gt_vertex(max_samples=100)  # ← 新增的实验 E
+        self._debug_ransac_with_pred_vertex(max_samples=100)
         final_summary = self._local_bop_like_eval(all_pred_dicts_for_bop, all_gt_dicts_for_bop)
 
         print("\n--- 评估结果 (Summary) ---")
@@ -666,6 +692,235 @@ class Evaluator:
               f"min={add_arr.min():.6e}, max={add_arr.max():.6e}, "
               f"mean={add_arr.mean():.6e}")
         print("[DEBUG_GT] 理论上这三个值都应该非常接近 0，如果不是，则说明 ADD/坐标系存在问题。\n")
+
+    def _debug_ransac_with_gt_vertex(self, max_samples: int = 100):
+        """
+        实验 E：用 GT 的 (mask, vertex) 通过 ransac_voting 解一次 kp2d，
+        看能恢复多接近 GT 的 kp2d。
+
+        注意：
+        - batch['vertex'] 已经被 NormalizeAndToTensor 除以 vertex_scale，
+          在这里要乘回去，恢复像素级偏移。
+        - 强制走 PyTorch 版 ransac_voting，绕开 CPU 版 shape 误判的问题。
+        """
+        if ransac_voting_mod is None:
+            print("[DEBUG_E] ransac_voting 模块不可用，跳过实验 E。")
+            return
+
+        l2_all = []
+        img_mean = []
+
+        n = 0
+        for batch in self.dataloader:
+            B = batch['inp'].shape[0]
+            for i in range(B):
+                if n >= max_samples:
+                    break
+
+                # 1) 取 GT 数据（都是 Tensor）
+                mask_gt = batch['mask'][i]           # (H, W)
+                vertex_gt = batch['vertex'][i]       # (2K, H, W)，此时已被 / vertex_scale
+                kp2d_gt = batch['kp2d'][i].cpu().numpy()  # (K, 2)
+
+                # 2) 恢复 vertex 到像素偏移尺度
+                scale = float(getattr(self.cfg.model, "vertex_scale", 1.0))
+                vertex_gt_px = vertex_gt * scale     # (2K, H, W)
+
+                # 3) 拼成 batch 维度，并放到 device 上
+                mask_t = mask_gt.unsqueeze(0).to(self.device)           # (1, H, W)
+                vertex_t = vertex_gt_px.unsqueeze(0).to(self.device)    # (1, 2K, H, W)
+
+                # 4) 调用统一接口 ransac_voting（会自动走 torch 版）
+                #    torch 版返回 (kpts2d, inlier_counts)
+                with torch.no_grad():
+                    kpts2d_t, inlier_counts = ransac_voting_mod.ransac_voting(
+                        mask_t,
+                        vertex_t,
+                        num_votes=self.cfg.model.ransac_voting.vote_num,
+                        inlier_thresh=self.cfg.model.ransac_voting.inlier_thresh,
+                        max_trials=self.cfg.model.ransac_voting.max_trials
+                    )
+
+                # 5) 取出 (K,2) 关键点坐标，转 numpy
+                kp2d_pred = kpts2d_t[0].detach().cpu().numpy()  # (K, 2)
+
+                # 6) 计算像素 L2 误差
+                diff = kp2d_pred - kp2d_gt
+                err = np.linalg.norm(diff, axis=1)  # (K,)
+                l2_all.append(err)
+                img_mean.append(err.mean())
+                n += 1
+
+            if n >= max_samples:
+                break
+
+        if not l2_all:
+            print("[DEBUG_E] 没有样本，无法执行实验 E。")
+            return
+
+        l2_all = np.concatenate(l2_all, axis=0)
+        img_mean = np.array(img_mean)
+
+        print("\n[DEBUG_E] ==== 实验 E：GT vertex + RANSAC → kp2d =====")
+        print(f"[DEBUG_E] 有效样本数: {n}")
+        print(f"[DEBUG_E] 所有关键点 L2 像素误差统计："
+              f"min={l2_all.min():.2f}, max={l2_all.max():.2f}, mean={l2_all.mean():.2f}")
+        print(f"[DEBUG_E] 按图像平均的关键点误差："
+              f"min={img_mean.min():.2f}, max={img_mean.max():.2f}, mean={img_mean.mean():.2f}")
+        print("[DEBUG_E] 理论预期：这里应该是接近 0～几像素，否则说明 vertex GT 或关键点顺序有问题。")
+
+    def _debug_ransac_with_pred_vertex(self, max_samples: int = 100):
+        """
+        实验 F：
+          F.1: Pred vertex + GT mask + RANSAC → kp2d
+          F.2: Pred vertex + Pred mask + RANSAC → kp2d
+
+        用来拆分：
+          - vertex head 本身的预测质量
+          - seg head 错误对 RANSAC 的影响
+        """
+        if ransac_voting_mod is None:
+            print("[DEBUG_F] ransac_voting 模块不可用，跳过实验 F。")
+            return
+
+        # 和 evaluate() 里一样的 move_to_device 策略
+        move_to_device = torch_utils_mod.move_batch_to_device if torch_utils_mod else _fallback_move_batch_to_device
+
+        # 统计量
+        l2_all_gtmask = []       # Pred vertex + GT mask
+        img_mean_gtmask = []
+
+        l2_all_predmask = []     # Pred vertex + Pred mask
+        img_mean_predmask = []
+
+        n = 0
+        scale = float(getattr(self.cfg.model, "vertex_scale", 1.0))
+
+        # 注意：这里会再跑一遍整个 dataloader 的前向
+        # 但验证集不大，开 no_grad + amp 问题不大
+        for batch in self.dataloader:
+            if n >= max_samples:
+                break
+
+            batch_gpu = move_to_device(batch, self.device)
+
+            with torch.no_grad():
+                with torch.amp.autocast(device_type='cuda', enabled=torch.cuda.is_available()):
+                    outputs_gpu = self.model(batch_gpu['inp'])
+
+            if 'vertex' not in outputs_gpu or 'seg' not in outputs_gpu:
+                print("[DEBUG_F] 模型输出中缺少 'vertex' 或 'seg'，无法执行实验 F。")
+                return
+
+            vertex_pred = outputs_gpu['vertex']          # (B, 2K, H, W)
+            seg_pred = outputs_gpu['seg']                # (B, C, H, W)
+
+            B = batch['inp'].shape[0]
+            for i in range(B):
+                if n >= max_samples:
+                    break
+
+                # GT kp2d
+                kp2d_gt = batch['kp2d'][i].cpu().numpy()     # (K, 2)
+
+                # ---- F.1: Pred vertex + GT mask ----
+                try:
+                    mask_gt_t = batch['mask'][i].unsqueeze(0).to(self.device)      # (1, H, W)
+                    vertex_i = (vertex_pred[i:i+1] * scale)                       # (1, 2K, H, W)
+
+                    with torch.no_grad():
+                        kpts2d_gtmask_t, _ = ransac_voting_mod.ransac_voting(
+                            mask=mask_gt_t,
+                            vertex=vertex_i,
+                            num_votes=self.cfg.model.ransac_voting.vote_num,
+                            inlier_thresh=self.cfg.model.ransac_voting.inlier_thresh,
+                            max_trials=self.cfg.model.ransac_voting.max_trials
+                        )
+
+                    kp2d_pred_gtmask = kpts2d_gtmask_t[0].detach().cpu().numpy()  # (K, 2)
+
+                    diff_gt = kp2d_pred_gtmask - kp2d_gt
+                    err_gt = np.linalg.norm(diff_gt, axis=1)  # (K,)
+                    l2_all_gtmask.append(err_gt)
+                    img_mean_gtmask.append(err_gt.mean())
+                except Exception as e:
+                    print(f"[DEBUG_F] F.1 (Pred vertex + GT mask) 第 {n} 个样本失败: {e}")
+                    # 出错的话就只统计 Pred mask 那支，继续往下
+
+                # ---- F.2: Pred vertex + Pred mask ----
+                try:
+                    seg_i = seg_pred[i:i+1]  # (1, C, H, W)
+                    if seg_i.shape[1] > 1:
+                        prob_fg = torch.softmax(seg_i, dim=1)[:, 1]  # (1, H, W)
+                    else:
+                        # 单通道情况下，视为 logits，走 sigmoid
+                        prob_fg = torch.sigmoid(seg_i[:, 0:1]).squeeze(1)  # (1, H, W)
+
+                    mask_pred_t = (prob_fg > 0.5).float()  # (1, H, W)
+
+                    vertex_i = (vertex_pred[i:i+1] * scale)
+
+                    with torch.no_grad():
+                        kpts2d_predmask_t, _ = ransac_voting_mod.ransac_voting(
+                            mask=mask_pred_t,
+                            vertex=vertex_i,
+                            num_votes=self.cfg.model.ransac_voting.vote_num,
+                            inlier_thresh=self.cfg.model.ransac_voting.inlier_thresh,
+                            max_trials=self.cfg.model.ransac_voting.max_trials
+                        )
+
+                    kp2d_pred_predmask = kpts2d_predmask_t[0].detach().cpu().numpy()  # (K, 2)
+
+                    diff_pm = kp2d_pred_predmask - kp2d_gt
+                    err_pm = np.linalg.norm(diff_pm, axis=1)  # (K,)
+                    l2_all_predmask.append(err_pm)
+                    img_mean_predmask.append(err_pm.mean())
+                except Exception as e:
+                    print(f"[DEBUG_F] F.2 (Pred vertex + Pred mask) 第 {n} 个样本失败: {e}")
+                    # 继续下一个样本
+
+                n += 1
+
+        if not l2_all_gtmask and not l2_all_predmask:
+            print("[DEBUG_F] 没有有效样本，实验 F 失败。")
+            return
+
+        print("\n[DEBUG_F] ==== 实验 F：Pred vertex + GT/Pred mask → kp2d ====")
+        print(f"[DEBUG_F] 有效样本数: {n}")
+
+        # 汇总统计：GT mask 分支
+        if l2_all_gtmask:
+            l2_all_gtmask = np.concatenate(l2_all_gtmask, axis=0)
+            img_mean_gtmask = np.array(img_mean_gtmask)
+            print(f"[DEBUG_F][GT mask] 所有关键点 L2 像素误差统计："
+                  f"min={l2_all_gtmask.min():.2f}, "
+                  f"max={l2_all_gtmask.max():.2f}, "
+                  f"mean={l2_all_gtmask.mean():.2f}")
+            print(f"[DEBUG_F][GT mask] 按图像平均的关键点误差："
+                  f"min={img_mean_gtmask.min():.2f}, "
+                  f"max={img_mean_gtmask.max():.2f}, "
+                  f"mean={img_mean_gtmask.mean():.2f}")
+        else:
+            print("[DEBUG_F][GT mask] 没有成功样本。")
+
+        # 汇总统计：Pred mask 分支
+        if l2_all_predmask:
+            l2_all_predmask = np.concatenate(l2_all_predmask, axis=0)
+            img_mean_predmask = np.array(img_mean_predmask)
+            print(f"[DEBUG_F][Pred mask] 所有关键点 L2 像素误差统计："
+                  f"min={l2_all_predmask.min():.2f}, "
+                  f"max={l2_all_predmask.max():.2f}, "
+                  f"mean={l2_all_predmask.mean():.2f}")
+            print(f"[DEBUG_F][Pred mask] 按图像平均的关键点误差："
+                  f"min={img_mean_predmask.min():.2f}, "
+                  f"max={img_mean_predmask.max():.2f}, "
+                  f"mean={img_mean_predmask.mean():.2f}")
+        else:
+            print("[DEBUG_F][Pred mask] 没有成功样本。")
+
+        print("[DEBUG_F] 对比结论：")
+        print("  - 如果 [GT mask] 分支的误差已经很大 → 主要问题在 vertex head；")
+        print("  - 如果 [GT mask] 分支还好，但 [Pred mask] 分支很差 → seg/mask 质量在拖后腿。")
 
     def _debug_pnp_with_gt_kp2d(self, gts: List[Dict[str, Any]], max_samples: int = 100):
         """
@@ -744,6 +999,82 @@ class Evaluator:
               f"{(add_arr < thr).mean():.4f}")
         print("[DEBUG_PNP_GT] 如果这里的 ADD 很小，说明 PnP 管线是健康的；"
               "反之则需要优先检查 PnP / 坐标系 / 单位。")
+    def _debug_pnp_with_pred_kp2d(self,
+                                  preds: List[Dict[str, Any]],
+                                  gts: List[Dict[str, Any]],
+                                  max_samples: int = 100):
+        """
+        实验 C：用 预测的 kp2d_pred + GT kp3d + K 跑一次 PnP，
+        直接度量“关键点预测 + 当前 PnP 管线”的误差。
+
+        如果：
+          - 实验 B (GT kp2d + PnP) 很好；
+          - 实验 C (pred kp2d + PnP) 很烂；
+        则说明问题几乎完全在“关键点预测 / RANSAC 解码”上。
+        """
+        obj_id = int(self.cfg.model.obj_id)
+        if obj_id not in self.model_points_lookup:
+            print(f"[DEBUG_PNP_PRED] model_points_lookup 中找不到 obj_id={obj_id}")
+            return
+
+        pts = self.model_points_lookup[obj_id]
+        diameter = self.model_info[obj_id]['diameter']
+        thr = 0.1 * diameter
+
+        add_list = []
+        re_list = []
+        te_list = []
+        n_total = 0
+        n_success = 0
+
+        for p, g in zip(preds[:max_samples], gts[:max_samples]):
+            if p['obj_id'] != obj_id:
+                continue
+            if 'kp2d_pred' not in p:
+                continue
+
+            n_total += 1
+
+            kp2d_pred = p['kp2d_pred']
+            kp3d = g['kp3d']
+            K = g['K']
+            R_gt = g['R']
+            t_gt = g['t']
+
+            out = self._solve_pnp(kp3d, kp2d_pred, K)
+            if out is None:
+                continue
+            R_pnp, t_pnp = out
+            n_success += 1
+
+            re = _fallback_rotation_error_deg(R_pnp, R_gt)
+            te = _fallback_translation_error(t_pnp, t_gt)
+            re_list.append(re)
+            te_list.append(te)
+
+            add_val = _fallback_add_metric(R_pnp, t_pnp, R_gt, t_gt, pts)
+            add_list.append(add_val)
+
+        print("\n[DEBUG_PNP_PRED] ==== 实验 C：Pred kp2d + PnP 检查 ====")
+        print(f"[DEBUG_PNP_PRED] 总共尝试样本数(前 {max_samples}): {n_total}")
+        print(f"[DEBUG_PNP_PRED] PnP 成功解出的样本数: {n_success}")
+
+        if not add_list:
+            print("[DEBUG_PNP_PRED] 没有成功的样本，说明用预测关键点跑 PnP 也经常被 sanity check 删掉。")
+            return
+
+        add_arr = np.array(add_list)
+        re_arr = np.array(re_list)
+        te_arr = np.array(te_list)
+
+        print(f"[DEBUG_PNP_PRED] 旋转误差 re(deg): min={re_arr.min():.4f}, "
+              f"max={re_arr.max():.4f}, mean={re_arr.mean():.4f}")
+        print(f"[DEBUG_PNP_PRED] 平移误差 te(mm): min={te_arr.min():.4f}, "
+              f"max={te_arr.max():.4f}, mean={te_arr.mean():.4f}")
+        print(f"[DEBUG_PNP_PRED] ADD(R_pnp,t_pnp; R_gt,t_gt): "
+              f"min={add_arr.min():.4f}, max={add_arr.max():.4f}, mean={add_arr.mean():.4f}")
+        print(f"[DEBUG_PNP_PRED] 其中 ADD<{thr:.3f} 的比例: {(add_arr < thr).mean():.4f}")
+        print("[DEBUG_PNP_PRED] 这里如果也非常差，就可以确认问题在关键点预测 / RANSAC。")
 
     def _local_bop_like_eval(self, predictions: List[Dict], gts: List[Dict]) -> Dict[str, Any]:
         obj_id = int(self.cfg.model.obj_id)
@@ -823,6 +1154,67 @@ class Evaluator:
             "avg_error_mm": avg_err,
             "total_instances": int(len(adds_arr))
         }
+    def _debug_kp2d_pred_vs_gt(self,
+                               preds: List[Dict[str, Any]],
+                               gts: List[Dict[str, Any]],
+                               max_samples: int = 100):
+        """
+        实验 D：直接比较 kp2d_pred 和 GT kp2d 的像素误差。
+
+        输出：
+          - 每个关键点的 L2 像素误差统计（min/max/mean）
+          - 每个样本的平均关键点误差统计
+        """
+
+        obj_id = int(self.cfg.model.obj_id)
+
+        all_pt_errors = []     # 所有关键点的 L2 误差（逐点）
+        per_img_mean_errors = []  # 每张图的平均关键点误差
+
+        n_samples = 0
+
+        for p, g in zip(preds[:max_samples], gts[:max_samples]):
+            if p['obj_id'] != obj_id:
+                continue
+            if 'kp2d_pred' not in p:
+                continue
+            if 'kp2d' not in g:
+                continue
+
+            kp2d_pred = np.asarray(p['kp2d_pred'], dtype=np.float32)
+            kp2d_gt   = np.asarray(g['kp2d'], dtype=np.float32)
+
+            if kp2d_pred.shape != kp2d_gt.shape:
+                print(f"[DEBUG_KP2D] 形状不一致: pred={kp2d_pred.shape}, gt={kp2d_gt.shape}")
+                continue
+
+            # (N,2) → 每个关键点的 L2 像素误差
+            diffs = kp2d_pred - kp2d_gt
+            dists = np.linalg.norm(diffs, axis=1)  # (N,)
+
+            all_pt_errors.extend(dists.tolist())
+            per_img_mean_errors.append(float(dists.mean()))
+            n_samples += 1
+
+        print("\n[DEBUG_KP2D] ==== 实验 D：Pred kp2d vs GT kp2d 像素误差 ====")
+        print(f"[DEBUG_KP2D] 有效样本数: {n_samples}")
+
+        if not all_pt_errors:
+            print("[DEBUG_KP2D] 没有可用的关键点误差（可能缺少 kp2d 或 kp2d_pred）")
+            return
+
+        all_pt_errors = np.array(all_pt_errors)
+        per_img_mean_errors = np.array(per_img_mean_errors)
+
+        print(f"[DEBUG_KP2D] 所有关键点 L2 像素误差统计："
+              f"min={all_pt_errors.min():.2f}, "
+              f"max={all_pt_errors.max():.2f}, "
+              f"mean={all_pt_errors.mean():.2f}")
+        print(f"[DEBUG_KP2D] 按图像平均的关键点误差："
+              f"min={per_img_mean_errors.min():.2f}, "
+              f"max={per_img_mean_errors.max():.2f}, "
+              f"mean={per_img_mean_errors.mean():.2f}")
+        print("[DEBUG_KP2D] 参考：一般 <5px 很好，10~20px 勉强能用，>50px 基本就很难出好姿态了。")
 
 
     def _fallback_summarize(self, predictions: List[Dict], gts: List[Dict]) -> Dict[str, Any]:

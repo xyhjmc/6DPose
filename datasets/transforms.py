@@ -53,33 +53,63 @@ def _affine_apply_to_vertex(vertex: np.ndarray,
                             use_offset: bool) -> np.ndarray:
     """
     对顶点场 (2K, H, W) 应用仿射变换 M。
-    顶点方向向量只受线性部分 L (2x2) 影响。
+
+    正确几何应该是：
+      v'(p') = L · v(A^{-1} p')
+    即：
+      1) 先像 image 一样对每个通道做 warpAffine（空间重采样）
+      2) 再用线性部分 L(2x2) 旋转/缩放向量
+      3) 单位向量模式下重新归一化
+      4) 应用新的 mask
     """
+    import cv2
+
     mask = (mask > 0).astype(np.float32)
-    L = M[:, :2].astype(np.float32)  # 线性矩阵 (2,2)
-
     H, W = mask.shape
-    num_kp = vertex.shape[0] // 2   # 顶点对数量 K
+    num_kp = vertex.shape[0] // 2
 
+    # reshape -> (K, 2, H, W)
     v = vertex.reshape(num_kp, 2, H, W)
+    vx = v[:, 0, :, :]    # (K, H, W)
+    vy = v[:, 1, :, :]    # (K, H, W)
 
-    vx = v[:, 0, :, :]
-    vy = v[:, 1, :, :]
+    # ---- 1) 先对 vx, vy 做和 image/mask 一样的 warpAffine（空间变换） ----
+    vx_warp = np.zeros_like(vx, dtype=np.float32)
+    vy_warp = np.zeros_like(vy, dtype=np.float32)
 
-    new_vx = L[0, 0] * vx + L[0, 1] * vy
-    new_vy = L[1, 0] * vx + L[1, 1] * vy
+    for i in range(num_kp):
+        vx_warp[i] = cv2.warpAffine(
+            vx[i].astype(np.float32), M, (W, H),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=0
+        )
+        vy_warp[i] = cv2.warpAffine(
+            vy[i].astype(np.float32), M, (W, H),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=0
+        )
 
-    new_v = np.stack([new_vx, new_vy], axis=1)  # (K,2,H,W)
+    # ---- 2) 对向量值应用线性部分 L（包含旋转+缩放）----
+    L = M[:, :2].astype(np.float32)  # (2,2)
 
-    # 单位向量模式：需要归一化
+    new_vx = L[0, 0] * vx_warp + L[0, 1] * vy_warp
+    new_vy = L[1, 0] * vx_warp + L[1, 1] * vy_warp
+
+    new_v = np.stack([new_vx, new_vy], axis=1)  # (K, 2, H, W)
+
+    # ---- 3) 单位向量模式：重新归一化 ----
     if not use_offset:
-        norm = np.linalg.norm(new_v, axis=1, keepdims=True)
+        norm = np.linalg.norm(new_v, axis=1, keepdims=True)  # (K,1,H,W)
         norm[norm < 1e-8] = 1.0
         new_v = new_v / norm
 
-    new_v *= mask[None, None, :, :]  # 应用 mask
+    # ---- 4) 应用 mask ----
+    new_v *= mask[None, None, :, :]  # (K,2,H,W) * (1,1,H,W)
 
     return new_v.reshape(2 * num_kp, H, W).astype(np.float32)
+
 
 
 def _update_K_after_affine(K: np.ndarray, M: np.ndarray) -> np.ndarray:

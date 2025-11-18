@@ -1,4 +1,4 @@
-# src/models/pvnet.py
+# src/models/pvnet/PVNet.py
 import numpy as np
 import torch
 import torch.nn as nn
@@ -28,7 +28,7 @@ PVNet (PyTorch版)
 class PVNet(nn.Module):
     def __init__(self, ver_dim, seg_dim, fcdim=256, s8dim=128, s4dim=64,
                  s2dim=32, raw_dim=32, use_un_pnp=False,
-                 vote_num=512, inlier_thresh=2.0, max_trials=200):
+                 vote_num=512, inlier_thresh=2.0, max_trials=200,vertex_scale:float = 1.0):
         """
         初始化 PVNet 模型。
 
@@ -52,7 +52,7 @@ class PVNet(nn.Module):
         self.vote_num = vote_num
         self.inlier_thresh = inlier_thresh
         self.max_trials = max_trials
-
+        self.vertex_scale = vertex_scale
         # -------------------------------
         # 1. 骨干网 (Backbone): ResNet18
         # -------------------------------
@@ -136,6 +136,10 @@ class PVNet(nn.Module):
             # 如果是多通道 (CrossEntropy Loss)，使用 argmax
             # (B, C_seg, H, W) -> (B, 1, H, W)
             mask_bin = torch.argmax(seg_pred, dim=1, keepdim=True).float()
+
+        vertex_for_voting = vertex_pred
+        if getattr(self, "vertex_scale", 1.0) != 1.0:
+            vertex_for_voting = vertex_pred * self.vertex_scale
 
         # --- 2. 调用 RANSAC 投票 ---
         # ransac_voting 会自动处理 (B, 1, H, W) 的 mask

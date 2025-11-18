@@ -1,4 +1,4 @@
-# configs/pvnet_linemod_ape.yaml
+# configs/pvnet_linemod_driller_less.yaml
 #
 # 训练 LINEMOD 'ape' (obj_id 1) 的特定配置
 #
@@ -62,8 +62,8 @@ model:
 
   obj_id: 8
   ransac_voting:
-    vote_num: 512
-    inlier_thresh:  20.0
+    vote_num: 1024
+    inlier_thresh:  5
     max_trials: 200
 
 # --- 5. 损失函数参数 ---

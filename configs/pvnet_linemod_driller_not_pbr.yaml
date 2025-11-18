@@ -1,4 +1,4 @@
-# configs/pvnet_linemod_ape.yaml
+# configs/pvnet_linemod_driller_less.yaml
 #
 # 训练 LINEMOD 'ape' (obj_id 1) 的特定配置
 #
@@ -20,7 +20,7 @@ dataset:
   data_root: "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet"
   # (假设 'ape' 的训练和验证 .npz 都在同一个目录)
   train_data_dir: "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet/driller_not_pbr"
-  val_data_dir: "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet/driller_test"
+  val_data_dir: "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet/driller_not_pbr"
   num_workers: 8
   pin_memory: true
 
@@ -32,14 +32,14 @@ dataset:
 # --- 3. 数据增强与变换 ---
 transforms:
   # [关键] 必须与 prepare_bop_dataset_pro.py 的设置匹配
-  use_offset: true # (用于 SmoothL1Loss)
+  use_offset: True # (用于 SmoothL1Loss)
 
   input_size_hw: [480, 640] # (H, W)
 
   augmentation:
-    degrees: 60
-    scale_range: [0.6, 1.3]
-    flip_p: 0.5
+    degrees: 30
+    scale_range: [0.9, 1.2]
+    flip_p: 0.3
 
   color_jitter:
     brightness: 0.2
@@ -55,20 +55,21 @@ model:
   num_keypoints: 9
   ver_dim: 18 # (num_keypoints * 2)
   seg_dim: 2  # (背景, 前景)
-
+  # [新增] 顶点缩放因子，配合上面的代码使用
+  vertex_scale: 100.0
 # (ape 是 LINEMOD 的 obj_id 1)
 # (我们的 prepare...pro.py 脚本需要这个 ID 来匹配)
 
   obj_id: 8
   ransac_voting:
-    vote_num: 512
-    inlier_thresh: 2.0
+    vote_num: 1024
+    inlier_thresh:  5
     max_trials: 200
 
 # --- 5. 损失函数参数 ---
 loss:
-  seg_weight: 1.0
-  vote_weight: 1.0
+  seg_weight: 0.5
+  vote_weight: 2.0
 
 # --- 6. 优化器 ---
 optimizer:
@@ -79,15 +80,17 @@ optimizer:
 # --- 7. 学习率调度器 ---
 scheduler:
   type: "MultiStepLR"
-  milestones: [30, 45]
+  milestones: [18, 25]
   gamma: 0.1
 
 # --- 8. 训练引擎参数 ---
 train:
-  max_epochs: 50
+  max_epochs: 30
   use_amp: true
-  log_interval: 50
+  log_interval: 25
 
 # --- 9. 评估器参数 ---
 pnp:
-  reproj_error_thresh: 3.0
+  reproj_error_thresh: 20.0
+
+

@@ -1,4 +1,4 @@
-# train.py
+# train_pvnet.py
 """
 项目主训练脚本 (Main Training Entrypoint)
 
@@ -51,7 +51,7 @@ def main():
     parser = argparse.ArgumentParser(description="PVNet 训练主脚本")
     parser.add_argument("--config",
                         required=False,
-                        default="configs/pvnet_linemod_driller_less.yaml",
+                        default="configs/pvnet_linemod_driller_all.yaml",
                         type=str,
                         help="指向实验配置 .yaml 文件的路径 (例如: configs/pvnet_linemod_ape.yaml)")
     args = parser.parse_args()
@@ -108,7 +108,11 @@ def main():
     train_dataset = BopPvnetDataset(
         data_dir=cfg.dataset.train_data_dir,
         transforms=train_transforms,
-        split_name="train"
+        split_name="train",
+        max_retry=1,
+        max_aug_retry=1,
+        debug_fallback=False,
+
     )
     train_loader = DataLoader(
         train_dataset,
@@ -145,7 +149,8 @@ def main():
         # 传入 RANSAC 投票参数 (供推理时使用)
         vote_num=cfg.model.ransac_voting.vote_num,
         inlier_thresh=cfg.model.ransac_voting.inlier_thresh,
-        max_trials=cfg.model.ransac_voting.max_trials
+        max_trials=cfg.model.ransac_voting.max_trials,
+        vertex_scale=cfg.model.vertex_scale
     )
     model.to(device)
 

@@ -1,6 +1,6 @@
-#!/usr/bin/env python3
+
 """
-prepare_bop_dataset_pro.py
+tools/prepare_pvnet_data.py
 
 专业级 BOP -> PVNet 数据预处理脚本。
 (BOP: http://bop.fel.cvut.cz/)
@@ -579,7 +579,7 @@ def parse_args():
     p.add_argument("--data-root", required=False, default="/home/xyh/datasets/LM(BOP)/lm",help="BOP dataset root (contains models/, scenes/)")
     p.add_argument("--dataset-split", required=False,default="train_pbr" ,help="split folder (e.g. train_pbr)")
     p.add_argument("--obj-id", required=False,default=8 ,type=int, help="object ID (int)")
-    p.add_argument("--out-dir", required=False, default="/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet/driller_less",help="output directory for .npz files")
+    p.add_argument("--out-dir", required=False, default="/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet/driller_all",help="output directory for .npz files")
     p.add_argument("--num-kp", type=int, default=9, help="number of keypoints K")
     p.add_argument("--kp3d-path", default=None, help="optional .npy with (K,3) keypoints")
     p.add_argument("--use-offset", default=True,action='store_true', help="generate offset maps (pixel units) instead of unit vectors")
@@ -587,7 +587,7 @@ def parse_args():
     p.add_argument("--model-file", default=None, help="override model file path (obj_xxxxxx.ply) if needed")
     p.add_argument("--num-workers", type=int, default=8, help="number of worker processes")
     p.add_argument("--max-retries", type=int, default=1, help="retry failed tasks up to this many times")
-    p.add_argument("--resume", default=True,action='store_true', help="skip existing outputs")
+    p.add_argument("--resume", default=False,action='store_true', help="skip existing outputs")
     p.add_argument("--overwrite", action='store_true', help="overwrite existing outputs")
     p.add_argument("--log-file", default="prepare_bop_dataset.log", help="log file path")
     p.add_argument("--errors-csv", default="errors.csv", help="errors CSV path")
