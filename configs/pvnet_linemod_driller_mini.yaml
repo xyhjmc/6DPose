@@ -20,7 +20,7 @@ dataset:
   data_root: "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet"
   # (假设 'ape' 的训练和验证 .npz 都在同一个目录)
   train_data_dir: "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet/driller_mini"
-  val_data_dir: "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet/driller_mini"
+  val_data_dir: "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet/driller_test"
   num_workers: 8
   pin_memory: true
 
@@ -37,12 +37,12 @@ transforms:
   input_size_hw: [480, 640] # (H, W)
 
   augmentation:
-    degrees: 30
-    scale_range: [0.9, 1.2]
-    flip_p: 0.3
+    degrees: 15
+    scale_range: [0.9, 1.1]
+    flip_p: 0.1
 
   color_jitter:
-    brightness: 0.2
+    brightness: 0.3
     contrast: 0.2
     saturation: 0.2
 
@@ -63,13 +63,13 @@ model:
   obj_id: 8
   ransac_voting:
     vote_num: 1024
-    inlier_thresh:  5
+    inlier_thresh:  3
     max_trials: 200
 
 # --- 5. 损失函数参数 ---
 loss:
   seg_weight: 0.5
-  vote_weight: 2.0
+  vote_weight: 3.5
 
 # --- 6. 优化器 ---
 optimizer:
@@ -80,17 +80,17 @@ optimizer:
 # --- 7. 学习率调度器 ---
 scheduler:
   type: "MultiStepLR"
-  milestones: [30, 45]
+  milestones: [24, 30]
   gamma: 0.1
 
 # --- 8. 训练引擎参数 ---
 train:
-  max_epochs: 50
+  max_epochs: 36
   use_amp: true
   log_interval: 25
 
 # --- 9. 评估器参数 ---
 pnp:
-  reproj_error_thresh: 20.0
+  reproj_error_thresh: 10
 
 

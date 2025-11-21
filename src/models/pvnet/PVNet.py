@@ -145,7 +145,7 @@ class PVNet(nn.Module):
         # ransac_voting 会自动处理 (B, 1, H, W) 的 mask
         output['kpt_2d'], output['inlier_counts'] = ransac_voting(
             mask=mask_bin,
-            vertex=vertex_for_voting,
+            vertex=vertex_pred,
             num_votes=self.vote_num,
             inlier_thresh=self.inlier_thresh,
             max_trials=self.max_trials

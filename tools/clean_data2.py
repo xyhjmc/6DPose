@@ -3,7 +3,7 @@ import json
 import numpy as np
 from tqdm import tqdm
 
-root = "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet/driller_all"
+root = "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet/driller_test"
 index_path = os.path.join(root, "index.json")
 
 with open(index_path, "r") as f:

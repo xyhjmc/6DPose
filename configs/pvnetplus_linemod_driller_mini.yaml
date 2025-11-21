@@ -5,12 +5,12 @@ defaults:
   - default
 
 run:
-  log_dir: "./logs/pvnetplus_linemod_driller_all"
-  checkpoint_dir: "./checkpoints/pvnetplus_linemod_driller_all"
+  log_dir: "./logs/pvnetplus_linemod_driller_mini"
+  checkpoint_dir: "./checkpoints/pvnetplus_linemod_driller_mini"
 
 dataset:
   data_root: "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet"
-  train_data_dir: "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet/driller_all"
+  train_data_dir: "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet/driller_mini"
   val_data_dir: "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet/driller_test"
   num_workers: 8
   pin_memory: true
@@ -23,7 +23,7 @@ transforms:
   use_offset: True
   input_size_hw: [480, 640]
   augmentation:
-    degrees: 10
+    degrees: 15
     scale_range: [0.9, 1.1]
     flip_p: 0.2
   color_jitter:
@@ -56,7 +56,7 @@ model:
 
 loss:
   seg_weight: 0.5
-  vote_weight: 3.8
+  vote_weight: 3.5
 
 optimizer:
   type: "Adam"
@@ -65,11 +65,11 @@ optimizer:
 
 scheduler:
   type: "MultiStepLR"
-  milestones: [25, 35,40,45]
-  gamma: 0.5
+  milestones: [24, 30]
+  gamma: 0.1
 
 train:
-  max_epochs: 50
+  max_epochs: 36
   use_amp: true
   log_interval: 25
 

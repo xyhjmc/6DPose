@@ -51,7 +51,7 @@ def main():
     parser = argparse.ArgumentParser(description="PVNet 训练主脚本")
     parser.add_argument("--config",
                         required=False,
-                        default="configs/pvnet_linemod_driller_all.yaml",
+                        default="configs/pvnetplus_linemod_driller_all.yaml",
                         type=str,
                         help="指向实验配置 .yaml 文件的路径 (例如: configs/pvnet_linemod_ape.yaml)")
     args = parser.parse_args()
