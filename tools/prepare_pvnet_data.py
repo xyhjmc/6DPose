@@ -30,6 +30,7 @@ import json
 import csv
 import time
 import traceback
+from contextlib import contextmanager
 from typing import Optional, Tuple, List, Dict, Any
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from functools import lru_cache  # [改进] 导入 lru_cache 用于进程内缓存
@@ -79,6 +80,17 @@ def setup_logging(log_file: str, verbose: bool) -> logging.Logger:
     logger.addHandler(fh)
 
     return logger
+
+
+@contextmanager
+def log_timing(logger: logging.Logger, message: str):
+    start = time.time()
+    logger.info(message)
+    try:
+        yield
+    finally:
+        elapsed = time.time() - start
+        logger.info(f"{message} 用时: {elapsed:.2f}s")
 
 
 # ---------------------
@@ -481,16 +493,24 @@ def run_parallel(tasks: List[Dict[str, Any]], num_workers: int, logger: logging.
             break  # 上一轮全部成功
 
         with ProcessPoolExecutor(max_workers=max(1, num_workers)) as ex:
-            # 提交所有任务
-            future_to_task = {ex.submit(process_instance_task, task): task
-                              for task in tasks_to_run}
+            # 提交所有任务并记录起始时间
+            future_to_task = {}
+            start_time_map = {}
+            for task in tasks_to_run:
+                fut = ex.submit(process_instance_task, task)
+                future_to_task[fut] = task
+                start_time_map[fut] = time.time()
 
-            pbar_desc = f"处理" if retries == 0 else f"重试 {retries}"
+            pbar_desc = f"处理 (第 {retries + 1}/{max_retries + 1} 轮)"
             pbar = tqdm(total=len(future_to_task), desc=pbar_desc, unit=" 实例")
+
+            success_count = 0
+            failure_count = 0
 
             # 使用 as_completed 实时获取已完成的任务
             for fut in as_completed(future_to_task):
                 task = future_to_task[fut]
+                task_duration = time.time() - start_time_map.get(fut, time.time())
                 try:
                     res = fut.result()  # 获取工作进程的返回字典
                 except Exception as e:
@@ -500,14 +520,20 @@ def run_parallel(tasks: List[Dict[str, Any]], num_workers: int, logger: logging.
 
                 # 处理工作进程返回的结果
                 if res['status'] == 'ok':
-                    pass  # 成功，pbar 更新
+                    success_count += 1
                 else:
+                    failure_count += 1
                     logger.error(f"任务失败: {task.get('out_path')}\n  "
-                                 f"错误: {res.get('error').splitlines()[0]}")  # 只打印第一行错误
-                    logger.debug(f"完整错误: {res.get('error')}")  # 完整错误写入 debug 日志
+                                 f"错误: {res.get('error').splitlines()[0]} (耗时 {task_duration:.2f}s)")  # 只打印第一行错误
+                    logger.debug(f"完整错误: {res.get('error')}\n任务耗时: {task_duration:.2f}s")  # 完整错误写入 debug 日志
                     failed_tasks.append(task)
 
                 pbar.update(1)
+                pbar.set_postfix({
+                    "成功": success_count,
+                    "失败": failure_count,
+                    "耗时(s)": f"{task_duration:.2f}"
+                })
             pbar.close()
 
         retries += 1
@@ -516,61 +542,167 @@ def run_parallel(tasks: List[Dict[str, Any]], num_workers: int, logger: logging.
     return failed_tasks
 
 
+ERROR_CSV_HEADER = ['out_path', 'rgb_path', 'mask_path', 'obj_id', 'scene', 'img_id', 'reason']
+
+
+def _write_error_rows(rows: List[List[Any]], csv_path: str, logger: logging.Logger, mode: str = 'a'):
+    dir_path = os.path.dirname(csv_path)
+    if dir_path:
+        os.makedirs(dir_path, exist_ok=True)
+    need_header = mode == 'w' or not os.path.exists(csv_path) or os.path.getsize(csv_path) == 0
+    with open(csv_path, mode, newline='') as f:
+        writer = csv.writer(f)
+        if need_header:
+            writer.writerow(ERROR_CSV_HEADER)
+        writer.writerows(rows)
+    logger.info(f"错误记录已写入 {csv_path} ({len(rows)} 条)。")
+
+
 def write_failure_csv(failures: List[Dict[str, Any]], csv_path: str, logger: logging.Logger):
     """
     将失败的任务列表写入 errors.csv。
     """
     logger.info(f"正在将 {len(failures)} 个失败记录写入: {csv_path}")
-    with open(csv_path, 'w', newline='') as f:
-        writer = csv.writer(f)
-        writer.writerow(['out_path', 'rgb_path', 'mask_path', 'obj_id', 'scene', 'img_id'])
-        for t in failures:
-            # 尝试从路径名中解析 scene/img_id 作为参考
-            name_parts = os.path.basename(t.get('out_path', 'unknown')).split('_')
-            scene = name_parts[2] if len(name_parts) > 2 else 'unknown'
-            img_id = name_parts[3] if len(name_parts) > 3 else 'unknown'
-            obj_id = name_parts[1] if len(name_parts) > 1 else 'unknown'
+    rows = []
+    for t in failures:
+        name_parts = os.path.basename(t.get('out_path', 'unknown')).split('_')
+        scene = name_parts[2] if len(name_parts) > 2 else 'unknown'
+        img_id = name_parts[3] if len(name_parts) > 3 else 'unknown'
+        obj_id = name_parts[1] if len(name_parts) > 1 else 'unknown'
 
-            writer.writerow([
-                t.get('out_path'),
-                t.get('rgb_path'),
-                t.get('mask_path', 'N/A'),
-                obj_id, scene, img_id
-            ])
+        rows.append([
+            t.get('out_path'),
+            t.get('rgb_path'),
+            t.get('mask_path', 'N/A'),
+            obj_id,
+            scene,
+            img_id,
+            'processing_error'
+        ])
+
+    _write_error_rows(rows, csv_path, logger, mode='w')
 
 
-def write_index_file(out_dir: str, logger: logging.Logger):
+def write_index_file(out_dir: str, logger: logging.Logger) -> int:
     """
     [索引生成器]
     遍历输出目录，生成一个 index.json 文件，汇总所有 .npz 文件的元数据。
     这对于 Dataset 类快速构建文件列表非常有用。
+
+    返回生成的条目数。
     """
-    logger.info(f"正在为 {out_dir} 生成 index.json...")
+    start_time = time.time()
+    npz_entries = [e for e in os.scandir(out_dir) if e.is_file() and e.name.endswith('.npz')]
+    total = len(npz_entries)
+    logger.info(f"正在为 {out_dir} 生成 index.json，共 {total} 个 .npz")
     idx = []
-    # 使用 os.scandir 提升效率
-    for entry in os.scandir(out_dir):
-        if entry.is_file() and entry.name.endswith('.npz'):
-            p = entry.path
-            try:
-                # 只加载键 (keys)，不加载数据，速度极快
-                with np.load(p) as d:
-                    item = {
-                        'file': entry.name,
-                        'rgb_path': str(d['rgb_path']),
-                        'kp3d_shape': d['kp3d'].shape,
-                        'vertex_shape': d['vertex'].shape,
-                        'mask_shape': d['mask'].shape
-                    }
-                    idx.append(item)
-            except Exception as e:
-                logger.warning(f"索引器: 无法读取 {p} (可能已损坏): {e}")
+    for entry in tqdm(npz_entries, desc="生成索引", unit="文件"):
+        p = entry.path
+        try:
+            # 只加载键 (keys)，不加载数据，速度极快
+            with np.load(p) as d:
+                item = {
+                    'file': entry.name,
+                    'rgb_path': str(d['rgb_path']),
+                    'kp3d_shape': d['kp3d'].shape,
+                    'vertex_shape': d['vertex'].shape,
+                    'mask_shape': d['mask'].shape
+                }
+                idx.append(item)
+        except Exception as e:
+            logger.warning(f"索引器: 无法读取 {p} (可能已损坏): {e}")
 
     # 按文件名排序
     idx.sort(key=lambda x: x['file'])
 
     with open(os.path.join(out_dir, 'index.json'), 'w') as f:
         json.dump(idx, f, indent=2)
-    logger.info(f"成功写入 index.json，包含 {len(idx)} 个条目。")
+    elapsed = time.time() - start_time
+    logger.info(f"成功写入 index.json，包含 {len(idx)} 个条目。耗时 {elapsed:.2f}s")
+    if elapsed > 10:
+        logger.info("索引生成耗时较长，如在网络盘上运行可考虑并行或本地磁盘生成。")
+    return len(idx)
+
+
+def clean_index_file(out_dir: str, errors_path: str, logger: logging.Logger,
+                     enable_clean: bool = True, min_foreground: int = 1) -> Tuple[int, int]:
+    """
+    清理 index.json，剔除 mask 前景像素过少的样本。
+
+    返回 (清理前数量, 清理后数量)。
+    """
+    if not enable_clean:
+        logger.info("已跳过 index.json 清理 (--disable-clean-index)")
+        return 0, 0
+
+    index_path = os.path.join(out_dir, 'index.json')
+    if not os.path.exists(index_path):
+        logger.warning(f"未找到 {index_path}，跳过清理。")
+        return 0, 0
+
+    with open(index_path, 'r') as f:
+        index = json.load(f)
+
+    total_before = len(index)
+    logger.info(f"开始清理 index.json，共 {total_before} 条。前景阈值: {min_foreground} 像素")
+
+    clean_index = []
+    removed_records = []
+    for rec in tqdm(index, desc="清理 index", unit="条目"):
+        npz_rel = rec.get('file')
+        if npz_rel is None:
+            logger.warning(f"记录缺少 file 字段: {rec}")
+            continue
+
+        npz_path = os.path.join(out_dir, npz_rel)
+        file_name = os.path.basename(npz_rel)
+        parts = file_name.split('_')
+        obj_id = parts[1] if len(parts) > 1 else 'unknown'
+        scene = parts[2] if len(parts) > 2 else 'unknown'
+        img_id = parts[3] if len(parts) > 3 else 'unknown'
+        if not os.path.exists(npz_path):
+            logger.warning(f"[缺失文件] {npz_path}")
+            removed_records.append([npz_path, rec.get('rgb_path', 'N/A'), 'N/A', obj_id, scene, img_id, 'missing_npz'])
+            continue
+
+        try:
+            with np.load(npz_path) as data:
+                mask = data['mask']
+        except Exception as e:
+            logger.warning(f"读取 {npz_path} 失败: {e}")
+            removed_records.append([npz_path, rec.get('rgb_path', 'N/A'), 'N/A', obj_id, scene, img_id, 'corrupted_npz'])
+            continue
+
+        if mask.sum() < min_foreground:
+            removed_records.append([
+                npz_path,
+                rec.get('rgb_path', 'N/A'),
+                rec.get('file', 'N/A'),
+                obj_id,
+                scene,
+                img_id,
+                'mask_empty'
+            ])
+            continue
+
+        clean_index.append(rec)
+
+    backup_path = os.path.join(out_dir, 'index_raw.json')
+    if not os.path.exists(backup_path):
+        os.rename(index_path, backup_path)
+        logger.info(f"已备份原始索引到 {backup_path}")
+    else:
+        logger.info("备份 index_raw.json 已存在，将直接覆盖 index.json")
+
+    with open(index_path, 'w') as f:
+        json.dump(clean_index, f, indent=2)
+
+    if removed_records:
+        _write_error_rows(removed_records, errors_path, logger, mode='a')
+
+    total_after = len(clean_index)
+    logger.info(f"清理完成: 原始 {total_before} 条，保留 {total_after} 条，移除 {len(removed_records)} 条。")
+    return total_before, total_after
 
 
 
@@ -591,6 +723,8 @@ def parse_args():
     p.add_argument("--overwrite", action='store_true', help="overwrite existing outputs")
     p.add_argument("--log-file", default="prepare_bop_dataset.log", help="log file path")
     p.add_argument("--errors-csv", default="errors.csv", help="errors CSV path")
+    p.add_argument("--disable-clean-index", action='store_true', help="skip cleaning index.json after generation")
+    p.add_argument("--clean-min-foreground", type=int, default=1, help="minimum foreground pixels to keep an entry during cleaning")
     p.add_argument("--verbose", action='store_true', help="verbose logging to console")
     return p.parse_args()
 
@@ -679,10 +813,11 @@ def main():
 
     # --- 4. 构建任务列表 ---
     try:
-        tasks = build_tasks(args.data_root, args.dataset_split, args.obj_id, args.out_dir,
-                            kp3d=kp3d, use_offset=args.use_offset,
-                            render_if_no_mask=args.render_if_no_mask,
-                            model_path=model_path, logger=logger)
+        with log_timing(logger, "构建任务列表"):
+            tasks = build_tasks(args.data_root, args.dataset_split, args.obj_id, args.out_dir,
+                                kp3d=kp3d, use_offset=args.use_offset,
+                                render_if_no_mask=args.render_if_no_mask,
+                                model_path=model_path, logger=logger)
     except Exception as e:
         logger.exception("构建任务列表时发生致命错误，退出。")
         return
@@ -701,9 +836,17 @@ def main():
         write_failure_csv(failed_tasks, errors_path, logger)
 
     try:
-        write_index_file(args.out_dir, logger)
+        with log_timing(logger, "生成 index.json"):
+            write_index_file(args.out_dir, logger)
     except Exception:
         logger.exception("生成 index.json 失败。")
+
+    try:
+        clean_index_file(args.out_dir, errors_path, logger,
+                         enable_clean=not args.disable_clean_index,
+                         min_foreground=args.clean_min_foreground)
+    except Exception:
+        logger.exception("清理 index.json 失败。")
 
     logger.info(f"--- 预处理完成 ---")
     logger.info(f"总耗时: {(end_time - start_time):.2f} 秒")
