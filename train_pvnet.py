@@ -192,17 +192,28 @@ def main():
         raise ValueError(f"不支持的优化器: {cfg.optimizer.type}")
     # --- 8. 调度器 (Scheduler) ---
     # [接口对齐]
-    if cfg.scheduler.type.lower() == 'multisteplr':
+    scheduler_type = cfg.scheduler.type.lower()
+    if scheduler_type == 'multisteplr':
         scheduler = torch.optim.lr_scheduler.MultiStepLR(
             optimizer,
             milestones=cfg.scheduler.milestones,
             gamma=cfg.scheduler.gamma
         )
-    elif cfg.scheduler.type.lower() == 'steplr':
+    elif scheduler_type == 'steplr':
         scheduler = torch.optim.lr_scheduler.StepLR(
             optimizer,
             step_size=cfg.scheduler.step_size,
             gamma=cfg.scheduler.gamma
+        )
+    elif scheduler_type == 'reducelronplateau':
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode='min',
+            factor=getattr(cfg.scheduler, 'factor', 0.1),
+            patience=getattr(cfg.scheduler, 'patience', 10),
+            threshold=getattr(cfg.scheduler, 'threshold', 1e-4),
+            cooldown=getattr(cfg.scheduler, 'cooldown', 0),
+            min_lr=getattr(cfg.scheduler, 'min_lr', 0.0)
         )
     else:
         raise ValueError(f"不支持的调度器: {cfg.scheduler.type}")

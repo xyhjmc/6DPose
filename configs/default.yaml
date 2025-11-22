@@ -86,6 +86,12 @@ scheduler:
   type: "MultiStepLR"
   milestones: [60, 80]
   gamma: 0.1
+  # ReduceLROnPlateau 专用参数（当 type 设置为 ReduceLROnPlateau 时生效）
+  factor: 0.1
+  patience: 10
+  threshold: 0.0001
+  cooldown: 0
+  min_lr: 0.0
 
 # --- 8. 训练引擎参数 ---
 train:
