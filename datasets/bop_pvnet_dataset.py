@@ -341,8 +341,10 @@ def pvnet_collate_fn(batch: List[Dict]):
     collated = {}
 
     for key in keys_to_stack:
-        if key in batch[0]:
-            collated[key] = torch.stack([b[key] for b in batch], dim=0)
+        if not all(key in b for b in batch):
+            # 有些样本缺少该键，跳过堆叠以避免 KeyError
+            continue
+        collated[key] = torch.stack([b[key] for b in batch], dim=0)
 
     # [修复] 'meta' 是非张量数据，单独收集
     if "meta" in batch[0]:
