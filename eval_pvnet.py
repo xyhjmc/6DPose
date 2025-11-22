@@ -82,6 +82,10 @@ def main():
     np.random.seed(cfg.seed)
     random.seed(cfg.seed)
     device = torch.device(cfg.device)
+    if device.type.startswith("cuda") and not torch.cuda.is_available():
+        print("[警告] 配置请求 CUDA，但当前环境不可用，自动切换到 CPU。")
+        device = torch.device("cpu")
+        cfg.device = "cpu"
 
     # --- 3. [评估] 数据增强 (Validation Transforms) ---
     # [关键] 验证集不使用任何随机增强 (没有 RandomAffine, RandomFlip, ColorJitter)
