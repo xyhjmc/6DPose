@@ -217,6 +217,7 @@ class Evaluator:
         self.model = model.to(device).eval()
         self.dataloader = dataloader
         self.device = device
+        self.use_amp = (self.device.type == 'cuda') and torch.cuda.is_available()
         self.cfg = cfg
         self.out_dir = out_dir
         self.verbose = verbose
@@ -467,7 +468,7 @@ class Evaluator:
             batch_gpu = move_to_device(batch, self.device)
 
             with torch.no_grad():
-                with torch.amp.autocast(device_type='cuda', enabled=torch.cuda.is_available()):
+                with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
                     # 2. 模型前向传播 (B,C,H,W) -> Dict[str, Tensor]
                     outputs_gpu = self.model(batch_gpu['inp'])
 
@@ -818,7 +819,7 @@ class Evaluator:
             batch_gpu = move_to_device(batch, self.device)
 
             with torch.no_grad():
-                with torch.amp.autocast(device_type='cuda', enabled=torch.cuda.is_available()):
+                with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
                     outputs_gpu = self.model(batch_gpu['inp'])
 
             if 'vertex' not in outputs_gpu or 'seg' not in outputs_gpu:

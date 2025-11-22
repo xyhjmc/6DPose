@@ -54,9 +54,10 @@ class Trainer:
         self.max_epochs = max_epochs
         self.log_interval = log_interval
 
-        self.use_amp = use_amp and torch.cuda.is_available()
+        # 仅当当前设备为 CUDA 时才启用 AMP，避免在 CPU 上误用 CUDA autocast
+        self.use_amp = use_amp and (self.device.type == 'cuda') and torch.cuda.is_available()
         # [修复] 使用 torch.amp.GradScaler 并指定 device_type
-        self.scaler = torch.amp.GradScaler( enabled=self.use_amp)
+        self.scaler = torch.amp.GradScaler(device_type=self.device.type, enabled=self.use_amp)
 
         self.writer = SummaryWriter(log_dir=self.log_dir)
         self.start_epoch = 0
@@ -87,7 +88,7 @@ class Trainer:
             batch = move_batch_to_device(batch, self.device)
 
             # [修复] 使用 torch.amp.autocast 并指定 device_type
-            with torch.amp.autocast(device_type='cuda', enabled=self.use_amp):
+            with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
                 # 3. 前向传播
                 output = self.model(batch['inp'])
 
@@ -148,7 +149,7 @@ class Trainer:
                 batch = move_batch_to_device(batch, self.device)
 
                 # [修复] 使用 torch.amp.autocast 并指定 device_type
-                with torch.amp.autocast(device_type='cuda', enabled=self.use_amp):
+                with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
                     # 3. 前向传播
                     output = self.model(batch['inp'])
                     # 4. 计算损失
