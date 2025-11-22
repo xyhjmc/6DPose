@@ -380,90 +380,90 @@ def ransac_voting_torch(mask: torch.Tensor,
                 else:
                     final_centers[k] = candidates[best_trial_k, k]
         else:
-                # --- unit-vector 模式的向量化 RANSAC ---
-                if n_sample < 2:
-                    final_centers[:] = base_xy.mean(dim=0)
-                    best_counts[:] = 0
-                else:
-                    dirs_by_k = vertex_sample.permute(1, 0, 2)  # (K, n_sample, 2)
+            # --- unit-vector 模式的向量化 RANSAC ---
+            if n_sample < 2:
+                final_centers[:] = base_xy.mean(dim=0)
+                best_counts[:] = 0
+            else:
+                dirs_by_k = vertex_sample.permute(1, 0, 2)  # (K, n_sample, 2)
 
-                    # 为每个关键点独立采样 RANSAC 的像素对，避免跨关键点共享随机性导致的偏差
-                    idx1 = torch.randint(0, n_sample, (K, n_trials), device=device)
-                    idx2 = torch.randint(0, n_sample, (K, n_trials), device=device)
-                    idx2 = torch.where(idx1 == idx2, (idx2 + 1) % n_sample, idx2)
-                    pair_idx = torch.stack([idx1, idx2], dim=2)  # (K, n_trials, 2)
+                # 为所有 trial 采样两两像素索引 (确保每对索引不相同)
+                idx1 = torch.randint(0, n_sample, (n_trials,), device=device)
+                idx2 = torch.randint(0, n_sample, (n_trials,), device=device)
+                idx2 = torch.where(idx1 == idx2, (idx2 + 1) % n_sample, idx2)
+                pair_idx = torch.stack([idx1, idx2], dim=1)  # (n_trials, 2)
 
-                    # 每个 trial 的两条射线的起点 (per-K)
-                    ray_points = base_xy[pair_idx]  # (K, n_trials, 2, 2)
-                    p1 = ray_points[:, :, 0, :]  # (K, n_trials, 2)
-                    p2 = ray_points[:, :, 1, :]  # (K, n_trials, 2)
-                    delta = p2 - p1  # (K, n_trials, 2)
+                # 每个 trial 的两条射线的起点 (shared across K)
+                ray_points = base_xy[pair_idx]  # (n_trials, 2, 2)
+                p1 = ray_points[:, 0]  # (n_trials, 2)
+                p2 = ray_points[:, 1]  # (n_trials, 2)
+                delta = (p2 - p1).unsqueeze(0)  # (1, n_trials, 2)
 
-                    # 每个 trial、每个 K 的方向向量
-                    gather_idx = pair_idx.unsqueeze(-1).expand(-1, -1, -1, 2)  # (K, n_trials, 2, 2)
-                    dirs_pairs = torch.gather(dirs_by_k.unsqueeze(1).expand(-1, n_trials, -1, -1), 2, gather_idx)
-                    d1 = dirs_pairs[:, :, 0, :]  # (K, n_trials, 2)
-                    d2 = dirs_pairs[:, :, 1, :]  # (K, n_trials, 2)
+                # 每个 trial、每个 K 的方向向量
+                gather_idx = pair_idx.unsqueeze(0).unsqueeze(-1).expand(K, -1, -1, 2)  # (K, n_trials, 2, 2)
+                dirs_pairs = torch.gather(dirs_by_k.unsqueeze(1).expand(-1, n_trials, -1, -1), 2, gather_idx)
+                d1 = dirs_pairs[:, :, 0, :]  # (K, n_trials, 2)
+                d2 = dirs_pairs[:, :, 1, :]  # (K, n_trials, 2)
 
-                    # 线性求交：detA = det([d1, -d2]) = -det(d1, d2)
-                    def det2d(a, b):
-                        return a[..., 0] * b[..., 1] - a[..., 1] * b[..., 0]
+                # 线性求交：detA = det([d1, -d2]) = -det(d1, d2)
+                def det2d(a, b):
+                    return a[..., 0] * b[..., 1] - a[..., 1] * b[..., 0]
 
-                    detA = -det2d(d1, d2)  # (K, n_trials)
-                    valid = detA.abs() >= 1e-6
+                detA = -det2d(d1, d2)  # (K, n_trials)
+                valid = detA.abs() >= 1e-6
 
-                    detA_safe = torch.where(detA >= 0, detA.clamp(min=1e-6), detA.clamp(max=-1e-6))
-                    t1 = det2d(delta, -d2) / detA_safe
-                    inter_candidates = p1 + t1.unsqueeze(-1) * d1  # (K, n_trials, 2)
+                detA_safe = torch.where(detA >= 0, detA.clamp(min=1e-6), detA.clamp(max=-1e-6))
+                t1 = det2d(delta.expand_as(d1), -d2) / detA_safe
+                inter_candidates = p1.unsqueeze(0) + t1.unsqueeze(-1) * d1  # (K, n_trials, 2)
 
-                    # 对非法解置为 NaN，便于后续过滤
-                    inter_candidates = torch.where(valid.unsqueeze(-1), inter_candidates, torch.full_like(inter_candidates, float('nan')))
+                # 对非法解置为 NaN，便于后续过滤
+                inter_candidates = torch.where(valid.unsqueeze(-1), inter_candidates, torch.full_like(inter_candidates, float('nan')))
 
-                    # 距离计算 (K, n_trials, n_sample)
-                    normals = torch.stack([-dirs_by_k[:, :, 1], dirs_by_k[:, :, 0]], dim=-1)  # (K, n_sample, 2)
-                    denom = torch.norm(normals, dim=-1).clamp(min=1e-8)  # (K, n_sample)
+                # 距离计算 (K, n_trials, n_sample)
+                normals = torch.stack([-dirs_by_k[:, :, 1], dirs_by_k[:, :, 0]], dim=-1)  # (K, n_sample, 2)
+                denom = torch.norm(normals, dim=-1).clamp(min=1e-8)  # (K, n_sample)
 
-                    diff = base_xy.unsqueeze(0).unsqueeze(0) - inter_candidates.unsqueeze(2)  # (K, n_trials, n_sample, 2)
-                    numer = torch.abs((normals.unsqueeze(1) * diff).sum(dim=-1))
-                    dists = numer / denom.unsqueeze(1)
+                diff = base_xy.unsqueeze(0).unsqueeze(0) - inter_candidates.unsqueeze(2)  # (K, n_trials, n_sample, 2)
+                numer = torch.abs((normals.unsqueeze(1) * diff).sum(dim=-1))
+                dists = numer / denom.unsqueeze(1)
 
-                    inlier_mask = dists <= inlier_thresh
-                    inlier_counts_trial = inlier_mask.sum(dim=-1)  # (K, n_trials)
+                inlier_mask = dists <= inlier_thresh
+                inlier_counts_trial = inlier_mask.sum(dim=-1)  # (K, n_trials)
 
-                    # 对非法解计数设为 -1 避免被选中
-                    inlier_counts_trial = torch.where(valid, inlier_counts_trial, torch.full_like(inlier_counts_trial, -1))
+                # 对非法解计数设为 -1 避免被选中
+                inlier_counts_trial = torch.where(valid, inlier_counts_trial, torch.full_like(inlier_counts_trial, -1))
 
-                    best_counts_trial, best_idx = inlier_counts_trial.max(dim=1)  # (K,)
-                    best_counts = best_counts_trial.to(torch.int32)
+                best_counts_trial, best_idx = inlier_counts_trial.max(dim=1)  # (K,)
+                best_counts = best_counts_trial.to(torch.int32)
 
-                    for k in range(K):
-                        idx = int(best_idx[k])
-                        if best_counts[k] < 0 or not torch.isfinite(inter_candidates[k, idx]).all():
-                            final_centers[k] = base_xy.mean(dim=0)
-                            best_counts[k] = 0
-                            continue
+                for k in range(K):
+                    idx = int(best_idx[k])
+                    if best_counts[k] < 0 or not torch.isfinite(inter_candidates[k, idx]).all():
+                        final_centers[k] = base_xy.mean(dim=0)
+                        best_counts[k] = 0
+                        continue
 
-                        mask_k = inlier_mask[k, idx]
-                        if not mask_k.any():
-                            final_centers[k] = inter_candidates[k, idx]
-                            best_counts[k] = 0
-                            continue
+                    mask_k = inlier_mask[k, idx]
+                    if not mask_k.any():
+                        final_centers[k] = inter_candidates[k, idx]
+                        best_counts[k] = 0
+                        continue
 
-                        normals_k = normals[k, mask_k]
-                        rhs = torch.sum(normals_k * base_xy[mask_k], dim=1)
-                        refined_center = None
+                    normals_k = normals[k, mask_k]
+                    rhs = torch.sum(normals_k * base_xy[mask_k], dim=1)
+                    refined_center = None
+                    try:
+                        refined_center = torch.linalg.lstsq(normals_k, rhs).solution
+                    except Exception:
                         try:
-                            refined_center = torch.linalg.lstsq(normals_k, rhs).solution
+                            refined, _ = torch.lstsq(rhs.unsqueeze(1), normals_k)  # torch<=1.10 兼容
+                            refined_center = refined[:2, 0]
                         except Exception:
-                            try:
-                                refined, _ = torch.lstsq(rhs.unsqueeze(1), normals_k)  # torch<=1.10 兼容
-                                refined_center = refined[:2, 0]
-                            except Exception:
-                                refined_center = None
+                            refined_center = None
 
-                        final_centers[k] = refined_center if refined_center is not None else inter_candidates[k, idx]
+                    final_centers[k] = refined_center if refined_center is not None else inter_candidates[k, idx]
 
-                    best_counts = torch.clamp(best_counts, min=0)
+                best_counts = torch.clamp(best_counts, min=0)
 
         kpts2d[b] = final_centers
         inlier_counts[b] = best_counts.to('cpu')
