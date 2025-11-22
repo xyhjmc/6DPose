@@ -72,6 +72,10 @@ def main():
     random.seed(cfg.seed)
     device = torch.device(cfg.device)
 
+    # 对于固定输入分辨率的模型，启用 cuDNN benchmark 可以加速卷积算子选择
+    if torch.cuda.is_available():
+        torch.backends.cudnn.benchmark = True
+
     # --- 3. 数据增强 (Transforms) ---
 
     # 训练集变换管道
