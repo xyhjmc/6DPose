@@ -79,6 +79,8 @@ class PVNetPlus(nn.Module):
         self.max_trials = max_trials
         self.vertex_scale = vertex_scale
         self.use_offset = use_offset
+        # 控制 eval 模式下是否执行 RANSAC 解码（验证时可关闭以提升速度）
+        self.decode_in_eval: bool = True
 
         backbone = backbone.lower()
         if backbone == "resnet18":
@@ -174,7 +176,7 @@ class PVNetPlus(nn.Module):
         ver_pred = out[:, self.seg_dim :, :, :]
         ret = {"seg": seg_pred, "vertex": ver_pred}
 
-        if not self.training:
+        if (not self.training) and getattr(self, "decode_in_eval", True):
             ret.update(self.decode_keypoint(seg_pred, ver_pred))
         return ret
 

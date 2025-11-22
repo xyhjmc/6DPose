@@ -130,6 +130,12 @@ class Trainer:
         """
         执行一个完整的验证 epoch。
         """
+        # 关闭推理解码，以避免在验证阶段运行昂贵的 RANSAC 逻辑。
+        # (保留 eval 模式以确保 BN/Dropout 行为正确)
+        prev_decode_flag = getattr(self.model, "decode_in_eval", True)
+        if hasattr(self.model, "decode_in_eval"):
+            self.model.decode_in_eval = False
+
         self.model.eval()
         progress_bar = tqdm(self.val_loader,
                             desc=f"Epoch {epoch}/{self.max_epochs} [Val]")
@@ -153,6 +159,10 @@ class Trainer:
                     epoch_losses[k] = epoch_losses.get(k, 0.0) + v.item()
 
                 progress_bar.set_postfix(val_loss=f"{total_loss.item():.4f}")
+
+        # 恢复验证前的解码开关
+        if hasattr(self.model, "decode_in_eval"):
+            self.model.decode_in_eval = prev_decode_flag
 
         # --- Epoch 结束 ---
         avg_losses = {k: v / len(self.val_loader) for k, v in epoch_losses.items()}
