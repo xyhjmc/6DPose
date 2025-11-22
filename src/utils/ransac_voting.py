@@ -265,7 +265,8 @@ def ransac_voting_torch(mask: torch.Tensor,
                         max_trials: int = 200,
                         replace: bool = False,
                         seed: Optional[int] = None,
-                        use_offset: bool = True) -> Tuple[torch.Tensor, torch.Tensor]:
+                        use_offset: bool = True,
+                        vectorized_unit: bool = False) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     [PyTorch/GPU版] RANSAC 投票 (向量化实现)。
 
@@ -277,6 +278,7 @@ def ransac_voting_torch(mask: torch.Tensor,
       max_trials: (int) RANSAC 迭代次数
       replace: (bool) 采样时是否允许重复
       seed: (int) 随机种子
+      vectorized_unit: (bool) 当 use_offset=False 时，使用向量化的 Unit-Vector RANSAC 版本
 
     返回:
       kpts2d: (B, K, 2) - 估计的关键点 (x, y)
@@ -381,43 +383,105 @@ def ransac_voting_torch(mask: torch.Tensor,
                     final_centers[k] = candidates[best_trial_k, k]
         else:
             dirs_sample = vertex_sample  # (n_sample, K, 2) 方向
-            for k in range(K):
-                dirs_k = dirs_sample[:, k]
-                if n_sample < 2:
-                    final_centers[k] = base_xy.mean(dim=0)
-                    best_counts[k] = 0
-                    continue
+            if vectorized_unit:
+                normals_all = torch.stack([-dirs_sample[:, :, 1], dirs_sample[:, :, 0]], dim=2)  # (n_sample, K, 2)
+                norm_norm = torch.norm(normals_all, dim=2).clamp(min=1e-8)  # (n_sample, K)
 
-                best_count = -1
-                best_center = base_xy.mean(dim=0)
+                for k in range(K):
+                    dirs_k = dirs_sample[:, k]
+                    normals = normals_all[:, k]
+                    norm_norm_k = norm_norm[:, k]
 
-                for _ in range(n_trials):
-                    pair = torch.randperm(n_sample, device=device)[:2]
-                    inter = _intersect_rays_torch(base_xy[pair[0]], dirs_k[pair[0]], base_xy[pair[1]], dirs_k[pair[1]])
-                    if inter is None:
+                    if n_sample < 2:
+                        final_centers[k] = base_xy.mean(dim=0)
+                        best_counts[k] = 0
                         continue
 
-                    dists = _line_distance_torch(base_xy, dirs_k, inter)
-                    inlier_mask = dists <= inlier_thresh
-                    cnt = int(inlier_mask.sum().item())
+                    pair_idx = torch.randint(0, n_sample, (n_trials, 2), device=device)
+                    p1 = base_xy[pair_idx[:, 0]]
+                    p2 = base_xy[pair_idx[:, 1]]
+                    d1 = dirs_k[pair_idx[:, 0]]
+                    d2 = dirs_k[pair_idx[:, 1]]
 
-                    if cnt > best_count:
-                        best_count = cnt
-                        normals = torch.stack([-dirs_k[inlier_mask, 1], dirs_k[inlier_mask, 0]], dim=1)
-                        rhs = torch.sum(normals * base_xy[inlier_mask], dim=1)
-                        refined_center = None
+                    A = torch.stack([d1, -d2], dim=1).float()  # (n_trials, 2, 2)
+                    rhs = (p2 - p1).float()
+                    det = torch.linalg.det(A)
+                    valid = det.abs() >= 1e-6
+
+                    best_center = base_xy.mean(dim=0)
+                    best_count = torch.zeros((), device=device, dtype=torch.int32)
+
+                    if valid.any():
                         try:
-                            refined_center = torch.linalg.lstsq(normals, rhs).solution
-                        except Exception:
-                            try:
-                                refined, _ = torch.lstsq(rhs.unsqueeze(1), normals)  # torch<=1.10 兼容
-                                refined_center = refined[:2, 0]
-                            except Exception:
-                                refined_center = None
-                        best_center = refined_center if refined_center is not None else inter
+                            sol = torch.linalg.solve(A[valid], rhs[valid])
+                            inter = (p1[valid].float() + sol[:, 0:1] * d1[valid].float()).to(dtype)
 
-                final_centers[k] = best_center
-                best_counts[k] = max(best_count, 0)
+                            diff = base_xy.unsqueeze(0) - inter.unsqueeze(1)  # (n_valid, n_sample, 2)
+                            numer = torch.abs(torch.sum(normals.unsqueeze(0) * diff, dim=2))
+                            dists = numer / norm_norm_k.unsqueeze(0)
+                            inlier_mask = dists <= inlier_thresh
+
+                            counts = inlier_mask.sum(dim=1)
+                            best_idx = torch.argmax(counts)
+                            best_count = counts[best_idx]
+                            best_mask = inlier_mask[best_idx]
+
+                            if best_mask.any():
+                                normals_in = normals[best_mask]
+                                rhs_in = torch.sum(normals_in * base_xy[best_mask], dim=1)
+                                refined_center = None
+                                try:
+                                    refined_center = torch.linalg.lstsq(normals_in, rhs_in).solution
+                                except Exception:
+                                    try:
+                                        refined, _ = torch.lstsq(rhs_in.unsqueeze(1), normals_in)  # torch<=1.10 兼容
+                                        refined_center = refined[:2, 0]
+                                    except Exception:
+                                        refined_center = None
+                                best_center = refined_center if refined_center is not None else inter[best_idx]
+                        except Exception:
+                            pass
+
+                    final_centers[k] = best_center
+                    best_counts[k] = max(int(best_count.item()), 0)
+            else:
+                for k in range(K):
+                    dirs_k = dirs_sample[:, k]
+                    if n_sample < 2:
+                        final_centers[k] = base_xy.mean(dim=0)
+                        best_counts[k] = 0
+                        continue
+
+                    best_count = -1
+                    best_center = base_xy.mean(dim=0)
+
+                    for _ in range(n_trials):
+                        pair = torch.randperm(n_sample, device=device)[:2]
+                        inter = _intersect_rays_torch(base_xy[pair[0]], dirs_k[pair[0]], base_xy[pair[1]], dirs_k[pair[1]])
+                        if inter is None:
+                            continue
+
+                        dists = _line_distance_torch(base_xy, dirs_k, inter)
+                        inlier_mask = dists <= inlier_thresh
+                        cnt = int(inlier_mask.sum().item())
+
+                        if cnt > best_count:
+                            best_count = cnt
+                            normals = torch.stack([-dirs_k[inlier_mask, 1], dirs_k[inlier_mask, 0]], dim=1)
+                            rhs = torch.sum(normals * base_xy[inlier_mask], dim=1)
+                            refined_center = None
+                            try:
+                                refined_center = torch.linalg.lstsq(normals, rhs).solution
+                            except Exception:
+                                try:
+                                    refined, _ = torch.lstsq(rhs.unsqueeze(1), normals)  # torch<=1.10 兼容
+                                    refined_center = refined[:2, 0]
+                                except Exception:
+                                    refined_center = None
+                            best_center = refined_center if refined_center is not None else inter
+
+                    final_centers[k] = best_center
+                    best_counts[k] = max(best_count, 0)
 
         kpts2d[b] = final_centers
         inlier_counts[b] = best_counts.to('cpu')
