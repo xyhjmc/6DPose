@@ -205,6 +205,8 @@ class Evaluator:
         self.cfg = cfg
         self.out_dir = out_dir
         self.verbose = verbose
+        self.vertex_scale = getattr(cfg.model, "vertex_scale", 1.0)
+        self.use_offset = getattr(cfg.model, "use_offset", True)
 
         if out_dir:
             os.makedirs(out_dir, exist_ok=True)
@@ -318,6 +320,8 @@ class Evaluator:
                 logger.warning("[Evaluator] 输出包含 'vertex'，但未找到 ransac_voting 模块，无法解码 kp2d")
                 return None
             vt = output_gpu["vertex"]   # Tensor (B, 2K, H, W)
+            if self.use_offset:
+                vt = vt * float(self.vertex_scale)
             seg = output_gpu["seg"]     # Tensor (B, C_seg, H, W) or (B,1,H,W)
 
             # produce mask_pred in shape (B, 1, H, W) expected by ransac_voting
@@ -343,7 +347,8 @@ class Evaluator:
                     vertex=vt,
                     num_votes=getattr(self.cfg.model.ransac_voting, "vote_num", 512),
                     inlier_thresh=getattr(self.cfg.model.ransac_voting, "inlier_thresh", 2.0),
-                    max_trials=getattr(self.cfg.model.ransac_voting, "max_trials", 200)
+                    max_trials=getattr(self.cfg.model.ransac_voting, "max_trials", 200),
+                    use_offset=self.use_offset,
                 )
                 # expect out[0] = kpts2d (B, K, 2)
                 kpts2d = out[0] if isinstance(out, (list, tuple)) else out

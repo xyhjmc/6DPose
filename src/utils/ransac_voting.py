@@ -3,6 +3,28 @@ import numpy as np
 from typing import Tuple, Optional
 
 
+def _intersect_rays_numpy(p1: np.ndarray, d1: np.ndarray, p2: np.ndarray, d2: np.ndarray) -> Optional[np.ndarray]:
+    """求两条射线的交点（最小二乘意义）。"""
+    A = np.stack([d1, -d2], axis=1)
+    det = np.linalg.det(A)
+    if abs(det) < 1e-6:
+        return None
+    try:
+        sol = np.linalg.solve(A, p2 - p1)
+    except np.linalg.LinAlgError:
+        return None
+    return p1 + sol[0] * d1
+
+
+def _line_distance_numpy(points: np.ndarray, dirs: np.ndarray, candidate: np.ndarray) -> np.ndarray:
+    """计算点到射线的垂直距离，用于单位向量模式的内点计数。"""
+    normals = np.stack([-dirs[:, 1], dirs[:, 0]], axis=1)
+    numer = np.abs(np.sum(normals * (points - candidate[None, :]), axis=1))
+    denom = np.linalg.norm(normals, axis=1)
+    denom[denom < 1e-8] = 1.0
+    return numer / denom
+
+
 def _pixel_coords(h: int, w: int) -> np.ndarray:
     """
     生成 (H, W, 2) 的像素坐标网格。
@@ -24,7 +46,9 @@ def ransac_voting_cpu(mask: np.ndarray,
                       vertex: np.ndarray,
                       num_votes: int = 512,
                       inlier_thresh: float = 2.0,
-                      max_trials: int = 200) -> np.ndarray:
+                      max_trials: int = 200,
+                      seed: Optional[int] = None,
+                      use_offset: bool = True) -> np.ndarray:
     """
     [CPU版] RANSAC 风格投票，用于从 PVNet 顶点场 (vertex field) 计算关键点位置。
 
@@ -61,6 +85,9 @@ def ransac_voting_cpu(mask: np.ndarray,
         # 如果物体掩码为空，返回 K 个 (0, 0) 点
         return np.zeros((K, 2), dtype=np.float32)
 
+    if seed is not None:
+        np.random.seed(seed)
+
     # 从 M 个掩码点中，最多采样 num_votes 个
     n_sample = min(num_votes, mask_idx.shape[0])
     # 随机选择 n_sample 个索引
@@ -76,13 +103,15 @@ def ransac_voting_cpu(mask: np.ndarray,
         vy = vertex[..., 2 * ki + 1]  # (H, W)
 
         # 存储 n_sample 个投票的 (x, y) 结果
-        votes = np.zeros((n_sample, 2), dtype=np.float32)
-
-        for i, (r, c) in enumerate(samp_idx):
-            # 投票 = 像素坐标 + 预测的偏移向量
-            # (r, c) 是 (y, x) 索引
-            votes[i, 0] = c + vx[r, c]  # 投票 x = c + dx
-            votes[i, 1] = r + vy[r, c]  # 投票 y = r + dy
+        base_xy = np.stack([samp_idx[:, 1], samp_idx[:, 0]], axis=1).astype(np.float32)
+        if use_offset:
+            votes = np.zeros((n_sample, 2), dtype=np.float32)
+            for i, (r, c) in enumerate(samp_idx):
+                votes[i, 0] = c + vx[r, c]  # 投票 x = c + dx
+                votes[i, 1] = r + vy[r, c]  # 投票 y = r + dy
+        else:
+            votes = base_xy.copy()
+        dirs = np.stack([vx[samp_idx[:, 0], samp_idx[:, 1]], vy[samp_idx[:, 0], samp_idx[:, 1]]], axis=1)
 
         # --- 3b. RANSAC ---
         best_count = 0
@@ -92,23 +121,44 @@ def ransac_voting_cpu(mask: np.ndarray,
         # RANSAC 迭代
         n_trials = min(max_trials, n_sample)  # 试验次数不能超过样本数
 
-        for t in range(n_trials):
-            # 随机选择一个 "候选" 投票作为假设的中心点
-            idx = np.random.randint(0, n_sample)
-            candidate = votes[idx]
+        if use_offset:
+            for _ in range(n_trials):
+                idx = np.random.randint(0, n_sample)
+                candidate = votes[idx]
 
-            # 计算所有投票到该候选点的欧氏距离
-            dists = np.linalg.norm(votes - candidate.reshape(1, 2), axis=1)
+                dists = np.linalg.norm(votes - candidate.reshape(1, 2), axis=1)
 
-            # 统计 "内点" (距离小于阈值的点)
-            inliers = votes[dists <= inlier_thresh]
-            cnt = inliers.shape[0]
+                inliers = votes[dists <= inlier_thresh]
+                cnt = inliers.shape[0]
 
-            # 如果当前候选点找到了更多的内点
-            if cnt > best_count:
-                best_count = cnt
-                # [关键]：使用所有内点的平均值作为精炼后的中心点
-                best_center = inliers.mean(axis=0)
+                if cnt > best_count:
+                    best_count = cnt
+                    best_center = inliers.mean(axis=0)
+        else:
+            if n_sample < 2:
+                kpt_list[ki] = best_center
+                continue
+            for _ in range(n_trials):
+                pair = np.random.choice(n_sample, 2, replace=False)
+                p1, p2 = votes[pair[0]], votes[pair[1]]
+                d1, d2 = dirs[pair[0]], dirs[pair[1]]
+                inter = _intersect_rays_numpy(p1, d1, p2, d2)
+                if inter is None:
+                    continue
+
+                dists = _line_distance_numpy(votes, dirs, inter)
+                inlier_mask = dists <= inlier_thresh
+                cnt = int(inlier_mask.sum())
+
+                if cnt > best_count:
+                    best_count = cnt
+                    normals = np.stack([-dirs[inlier_mask, 1], dirs[inlier_mask, 0]], axis=1)
+                    rhs = np.sum(normals * votes[inlier_mask], axis=1)
+                    try:
+                        refined, *_ = np.linalg.lstsq(normals, rhs, rcond=None)
+                        best_center = refined
+                    except np.linalg.LinAlgError:
+                        best_center = inter
 
         kpt_list[ki] = best_center
 
@@ -186,13 +236,33 @@ def _ensure_batch_mask_vertex(mask: torch.Tensor, vertex: torch.Tensor
     return mask, vertex
 
 
+def _intersect_rays_torch(p1: torch.Tensor, d1: torch.Tensor, p2: torch.Tensor, d2: torch.Tensor) -> Optional[torch.Tensor]:
+    A = torch.stack([d1, -d2], dim=1)
+    det = torch.det(A)
+    if torch.abs(det) < 1e-6:
+        return None
+    try:
+        sol = torch.linalg.solve(A, p2 - p1)
+    except RuntimeError:
+        return None
+    return p1 + sol[0] * d1
+
+
+def _line_distance_torch(points: torch.Tensor, dirs: torch.Tensor, candidate: torch.Tensor) -> torch.Tensor:
+    normals = torch.stack([-dirs[:, 1], dirs[:, 0]], dim=1)
+    numer = torch.abs(torch.sum(normals * (points - candidate.unsqueeze(0)), dim=1))
+    denom = torch.norm(normals, dim=1).clamp(min=1e-8)
+    return numer / denom
+
+
 def ransac_voting_torch(mask: torch.Tensor,
                         vertex: torch.Tensor,
                         num_votes: int = 512,
                         inlier_thresh: float = 2.0,
                         max_trials: int = 200,
                         replace: bool = False,
-                        seed: Optional[int] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+                        seed: Optional[int] = None,
+                        use_offset: bool = True) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     [PyTorch/GPU版] RANSAC 投票 (向量化实现)。
 
@@ -269,9 +339,8 @@ def ransac_voting_torch(mask: torch.Tensor,
         vertex_sample = vertex_hw[b, rows, cols, :]  # (n_sample, 2K)
         vertex_sample = vertex_sample.view(n_sample, K, 2)  # (n_sample, K, 2)
 
-        # 投票 = 像素坐标 + 偏移向量
-        # (n_sample, 1, 2) + (n_sample, K, 2) -> (n_sample, K, 2) (广播)
-        votes = base_xy.unsqueeze(1) + vertex_sample
+        # 投票 = 像素坐标 + 偏移向量（offset 模式），或仅保留像素坐标（unit 向量模式）
+        votes = base_xy.unsqueeze(1) + vertex_sample if use_offset else base_xy.unsqueeze(1).expand(-1, K, -1)
 
         # 3d. RANSAC 迭代
         # 随机选择 RANSAC 迭代的 "候选" 索引
@@ -281,43 +350,71 @@ def ransac_voting_torch(mask: torch.Tensor,
         # 候选的中心点 (n_trials, K, 2)
         candidates = votes[rand_idx]
 
-        # 3e. [关键] 向量化距离计算
-        # (K, 1, n_sample, 2) - (K, n_trials, 1, 2) -> (K, n_trials, n_sample, 2)
-        v_exp = votes.permute(1, 0, 2).unsqueeze(1)  # (K, 1, n_sample, 2)
-        c_exp = candidates.permute(1, 0, 2).unsqueeze(2)  # (K, n_trials, 1, 2)
-
-        # 计算 L2 距离的平方 (更高效)
-        dists_sq = torch.sum((v_exp - c_exp) ** 2, dim=-1)  # (K, n_trials, n_sample)
-        # 距离阈值的平方
-        thresh_sq = inlier_thresh ** 2
-
-        # (K, n_trials, n_sample)
-        inlier_mask = dists_sq <= thresh_sq
-
-        # (K, n_trials)
-        inlier_counts_trial = inlier_mask.sum(dim=-1)
-
-        # 3f. 找到最佳假设
-        # best_idx (K,)，为 K 个关键点分别找到内点数最多的 trial 索引
-        best_counts, best_idx = inlier_counts_trial.max(dim=1)  # (K,)
-
-        # 3g. 精炼 (Refine)
-        # 循环 K 个关键点，计算最佳假设的 "内点均值"
         final_centers = torch.zeros((K, 2), dtype=dtype, device=device)
+        best_counts = torch.zeros((K,), dtype=torch.int32, device=device)
 
-        for k in range(K):
-            # 获取第 k 个关键点的最佳 trial 索引
-            best_trial_k = best_idx[k]
-            # 找到对应的内点掩码 (n_sample,)
-            mask_k = inlier_mask[k, best_trial_k]  # (n_sample,)
+        if use_offset:
+            # 3e. [关键] 向量化距离计算
+            # (K, 1, n_sample, 2) - (K, n_trials, 1, 2) -> (K, n_trials, n_sample, 2)
+            v_exp = votes.permute(1, 0, 2).unsqueeze(1)  # (K, 1, n_sample, 2)
+            c_exp = candidates.permute(1, 0, 2).unsqueeze(2)  # (K, n_trials, 1, 2)
 
-            if mask_k.any():
-                # 计算内点投票的均值
-                inlier_votes = votes[mask_k, k]  # (N_inliers, 2)
-                final_centers[k] = inlier_votes.mean(dim=0)
-            else:
-                # 如果 RANSAC 失败 (0 内点)，回退到使用原始的最佳候选点
-                final_centers[k] = candidates[best_trial_k, k]
+            dists_sq = torch.sum((v_exp - c_exp) ** 2, dim=-1)  # (K, n_trials, n_sample)
+            thresh_sq = inlier_thresh ** 2
+            inlier_mask = dists_sq <= thresh_sq
+
+            inlier_counts_trial = inlier_mask.sum(dim=-1)
+            best_counts, best_idx = inlier_counts_trial.max(dim=1)  # (K,)
+            best_counts = best_counts.to(torch.int32)
+
+            for k in range(K):
+                best_trial_k = best_idx[k]
+                mask_k = inlier_mask[k, best_trial_k]  # (n_sample,)
+
+                if mask_k.any():
+                    inlier_votes = votes[mask_k, k]  # (N_inliers, 2)
+                    final_centers[k] = inlier_votes.mean(dim=0)
+                else:
+                    final_centers[k] = candidates[best_trial_k, k]
+        else:
+            dirs_sample = vertex_sample  # (n_sample, K, 2) 方向
+            for k in range(K):
+                dirs_k = dirs_sample[:, k]
+                if n_sample < 2:
+                    final_centers[k] = base_xy.mean(dim=0)
+                    best_counts[k] = 0
+                    continue
+
+                best_count = -1
+                best_center = base_xy.mean(dim=0)
+
+                for _ in range(n_trials):
+                    pair = torch.randperm(n_sample, device=device)[:2]
+                    inter = _intersect_rays_torch(base_xy[pair[0]], dirs_k[pair[0]], base_xy[pair[1]], dirs_k[pair[1]])
+                    if inter is None:
+                        continue
+
+                    dists = _line_distance_torch(base_xy, dirs_k, inter)
+                    inlier_mask = dists <= inlier_thresh
+                    cnt = int(inlier_mask.sum().item())
+
+                    if cnt > best_count:
+                        best_count = cnt
+                        normals = torch.stack([-dirs_k[inlier_mask, 1], dirs_k[inlier_mask, 0]], dim=1)
+                        rhs = torch.sum(normals * base_xy[inlier_mask], dim=1)
+                        refined_center = None
+                        try:
+                            refined_center = torch.linalg.lstsq(normals, rhs).solution
+                        except Exception:
+                            try:
+                                refined, _ = torch.lstsq(rhs.unsqueeze(1), normals)  # torch<=1.10 兼容
+                                refined_center = refined[:2, 0]
+                            except Exception:
+                                refined_center = None
+                        best_center = refined_center if refined_center is not None else inter
+
+                final_centers[k] = best_center
+                best_counts[k] = max(best_count, 0)
 
         kpts2d[b] = final_centers
         inlier_counts[b] = best_counts.to('cpu')
