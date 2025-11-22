@@ -201,6 +201,7 @@ class Evaluator:
                  cfg: Any,  # 完整的配置命名空间
                  out_dir: Optional[str] = None,
                  verbose: bool = True,
+                 enable_debug: bool = False,
                                   ):
         """
         初始化评估器。
@@ -219,6 +220,7 @@ class Evaluator:
         self.cfg = cfg
         self.out_dir = out_dir
         self.verbose = verbose
+        self.enable_debug = enable_debug
         self.vertex_scale = cfg.model.vertex_scale
         self.use_offset = getattr(cfg.model, "use_offset", True)
 
@@ -638,14 +640,15 @@ class Evaluator:
         #     print("[Evaluator 警告] 'src.metrics.bop_eval' 未找到。回退到轻量级本地摘要。")
         #     final_summary = self._fallback_summarize(all_pred_dicts_for_bop, all_gt_dicts_for_bop)
                 # 实验 B：GT kp2d + PnP
-        self._debug_pnp_with_gt_kp2d(all_gt_dicts_for_bop, max_samples=200)
+        if self.enable_debug:
+            self._debug_pnp_with_gt_kp2d(all_gt_dicts_for_bop, max_samples=200)
 
-        self._debug_add_gt_vs_gt(all_gt_dicts_for_bop, max_samples=50)
+            self._debug_add_gt_vs_gt(all_gt_dicts_for_bop, max_samples=50)
 
-        self._debug_pnp_with_pred_kp2d(all_pred_dicts_for_bop, all_gt_dicts_for_bop, max_samples=200)
-        self._debug_kp2d_pred_vs_gt(all_pred_dicts_for_bop, all_gt_dicts_for_bop, max_samples=200)
-        self._debug_ransac_with_gt_vertex(max_samples=100)  # ← 新增的实验 E
-        self._debug_ransac_with_pred_vertex(max_samples=100)
+            self._debug_pnp_with_pred_kp2d(all_pred_dicts_for_bop, all_gt_dicts_for_bop, max_samples=200)
+            self._debug_kp2d_pred_vs_gt(all_pred_dicts_for_bop, all_gt_dicts_for_bop, max_samples=200)
+            self._debug_ransac_with_gt_vertex(max_samples=100)  # ← 新增的实验 E
+            self._debug_ransac_with_pred_vertex(max_samples=100)
         final_summary = self._local_bop_like_eval(all_pred_dicts_for_bop, all_gt_dicts_for_bop)
 
         print("\n--- 评估结果 (Summary) ---")

@@ -158,7 +158,11 @@ class Trainer:
                 for k, v in loss_dict.items():
                     epoch_losses[k] = epoch_losses.get(k, 0.0) + v.item()
 
-                progress_bar.set_postfix(val_loss=f"{total_loss.item():.4f}")
+                progress_bar.set_postfix(
+                    val_total=f"{total_loss.item():.4f}",
+                    segval=f"{loss_dict['seg_loss'].item():.4f}",
+                    vertexval=f"{loss_dict['vote_loss'].item():.4f}"
+                )
 
         # 恢复验证前的解码开关
         if hasattr(self.model, "decode_in_eval"):
@@ -225,8 +229,15 @@ class Trainer:
 
             lr = self.optimizer.param_groups[0]['lr']
             self.writer.add_scalar("train_epoch/learning_rate", lr, epoch)
-            print(f"[Epoch {epoch}] Train Loss: {train_loss_dict['total_loss']:.4f} (T: {train_time:.2f}s) | "
-                  f"Val Loss: {val_loss_dict['total_loss']:.4f} (T: {val_time:.2f}s) | LR: {lr:.1e}")
+            print(
+                f"[Epoch {epoch}] Train Loss: {train_loss_dict['total_loss']:.4f} "
+                f"(seg={train_loss_dict.get('seg_loss', float('nan')):.4f}, "
+                f"vertex={train_loss_dict.get('vote_loss', float('nan')):.4f}, T: {train_time:.2f}s) | "
+                f"Val Loss: {val_loss_dict['total_loss']:.4f} "
+                f"(seg={val_loss_dict.get('seg_loss', float('nan')):.4f}, "
+                f"vertex={val_loss_dict.get('vote_loss', float('nan')):.4f}, T: {val_time:.2f}s) | "
+                f"LR: {lr:.1e}"
+            )
 
             is_best = val_loss_dict['total_loss'] < self.best_val_loss
             if is_best:

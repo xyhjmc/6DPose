@@ -63,6 +63,8 @@ def main():
                         help="保存详细 .json 评估结果的目录")
 
     parser.add_argument("--debug", default=False,action="store_true", help="运行单样本全流程调试，然后退出")
+    parser.add_argument("--debug_metrics", default=False, action="store_true",
+                        help="开启耗时的调试度量（PnP/ADD/投票实验）。默认关闭以加速评估。")
     args = parser.parse_args()
 
     # 加载配置 (cfg 是一个 SimpleNamespace)
@@ -157,7 +159,8 @@ def main():
         device=device,
         cfg=cfg,  # Evaluator 需要完整的 cfg 来获取 BOP 路径和 PnP 参数
         out_dir=eval_output_dir,  # 保存每个样本的 .json 结果
-        verbose=True
+        verbose=True,
+        enable_debug=args.debug_metrics
     )
 
     # --- 8. 启动评估！ ---
