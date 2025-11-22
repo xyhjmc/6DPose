@@ -149,13 +149,13 @@ class PVNetPlus(nn.Module):
         if getattr(self, "vertex_scale", 1.0) != 1.0 and self.use_offset:
             vertex_for_voting = vertex_pred * self.vertex_scale
 
-            kpt_2d, inlier_counts = ransac_voting(
-                mask=mask_bin,
-                vertex=vertex_for_voting,
-                num_votes=self.vote_num,
-                inlier_thresh=self.inlier_thresh,
-                max_trials=self.max_trials,
-                use_offset=self.use_offset,
+        kpt_2d, inlier_counts = ransac_voting(
+            mask=mask_bin,
+            vertex=vertex_for_voting,
+            num_votes=self.vote_num,
+            inlier_thresh=self.inlier_thresh,
+            max_trials=self.max_trials,
+            use_offset=self.use_offset,
         )
         return {"kpt_2d": kpt_2d, "inlier_counts": inlier_counts}
 
