@@ -274,7 +274,7 @@ class Evaluator:
         print(f"[Evaluator] 成功为 {len(lookup)} 个模型加载了点云。")
         return lookup
 
-    def _decode_kp2d_from_output(self, output_gpu: Dict[str, Any]) -> Optional[np.ndarray]:
+    def _decode_kp2d_from_output(self, output_gpu: Dict[str, Any], keep_batch_dim: bool = False) -> Optional[np.ndarray]:
         """
         使用 PVNet 正统的 vertex + seg + RANSAC 解码 2D 关键点。
 
@@ -325,9 +325,10 @@ class Evaluator:
                 use_offset=self.use_offset
             )
 
-            # 6. 转为 numpy，去掉 batch 维度 → (K, 2)
+            # 6. 转为 numpy (默认去掉 batch 维度，与旧接口兼容)
             kp2d_np = kpts2d_t.detach().cpu().numpy().astype(np.float32)  # (B, K, 2)
-            kp2d_np = np.squeeze(kp2d_np, axis=0)  # 这里 B=1，所以 squeeze 掉 batch 维
+            if not keep_batch_dim and kp2d_np.shape[0] == 1:
+                kp2d_np = kp2d_np[0]
 
             return kp2d_np
 
@@ -395,7 +396,8 @@ class Evaluator:
 
     def _get_pose_from_output(self,
                               output_gpu: Dict[str, Any],
-                              gt_data: Dict[str, Any]) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+                              gt_data: Dict[str, Any],
+                              kp2d_pred_np: Optional[np.ndarray] = None) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
         """
         [改进] 封装“智能推理链” (您的 Problem 3)。
 
@@ -412,7 +414,8 @@ class Evaluator:
 
         # 2. 尝试从 2D 关键点解算 (PnP)
         #    (内部会处理 PVNet 'vertex'/'seg' 的情况)
-        kp2d_pred_np = self._decode_kp2d_from_output(output_gpu)
+        if kp2d_pred_np is None:
+            kp2d_pred_np = self._decode_kp2d_from_output(output_gpu)
 
         if kp2d_pred_np is not None:
             # 3. 解算 PnP
@@ -470,6 +473,9 @@ class Evaluator:
 
             B = batch['inp'].shape[0]  # 批量大小
 
+            # 2.5. 先对整个 batch 解码一次 kp2d，避免单样本重复触发 RANSAC GPU kernel
+            kp2d_batch = self._decode_kp2d_from_output(outputs_gpu, keep_batch_dim=True)
+
             # 3. 逐个样本处理 (PnP 是非批量的)
             for i in range(B):
                 # [接口对齐] 提取第 i 个样本的 GT (在 CPU 上)
@@ -495,7 +501,10 @@ class Evaluator:
                 pred_gpu = {k: v[i:i + 1] for k, v in outputs_gpu.items()
                             if isinstance(v, torch.Tensor)}
                 # 解码预测的 2D 关键点（用于后续 PnP debug）
-                kp2d_pred_np = self._decode_kp2d_from_output(pred_gpu)
+                kp2d_pred_np = None
+                if kp2d_batch is not None and i < len(kp2d_batch):
+                    # 直接复用批量结果，避免重复 GPU/CPU 往返
+                    kp2d_pred_np = kp2d_batch[i]
                 # 4. [改进] 调用重构后的“智能推理链”
                 # --- DEBUG START: 仅打印前 3 个样本 ---
                 if len(all_pred_dicts_for_bop) < 3:
@@ -508,8 +517,6 @@ class Evaluator:
                     # 正常情况: LINEMOD 钻头直径约 200mm，所以值应该在 -100 到 +100 左右
 
                     # 2. 检查预测的 2D 点 (kp2d_pred)
-                    # 我们需要手动调用一次解码来看看中间结果
-                    kp2d_debug = self._decode_kp2d_from_output(pred_gpu)
                     if kp2d_pred_np is not None:
                         print(f"  > Pred kp2d (前3个): \n{kp2d_pred_np[:3]}")
                         print(f"  > Pred kp2d 范围: min={kp2d_pred_np.min():.2f}, max={kp2d_pred_np.max():.2f}")
@@ -521,14 +528,14 @@ class Evaluator:
                     print(f"  > K (0,0)={k_mat[0, 0]:.2f}, (0,2)={k_mat[0, 2]:.2f}")
 
                     # 4. 检查最终解算的姿态 (R, t)
-                    R_pred, t_pred = self._get_pose_from_output(pred_gpu, gt)
+                    R_pred, t_pred = self._get_pose_from_output(pred_gpu, gt, kp2d_pred_np)
                     print(f"  > 结果 R_pred:\n{R_pred}")
                     print(f"  > 结果 t_pred: {t_pred}")
                     # 正常情况: t_pred 应该是 [x, y, z]，z 大约在 500~1500 (mm) 之间
                     # 异常情况: 如果 z 是 3.0e+14，那就是 PnP 炸了
                 else:
                     # 正常运行
-                    R_pred, t_pred = self._get_pose_from_output(pred_gpu, gt)
+                    R_pred, t_pred = self._get_pose_from_output(pred_gpu, gt, kp2d_pred_np)
                 # --- DEBUG END ---
 
                 # 5. 组装 BOP 格式的 pred 和 gt 字典
