@@ -63,7 +63,8 @@ def run_full_debug(model, dataset, cfg):
     print("\n============== 4. RANSAC 解算 kp2d ==============")
 
     if 'vertex' in out and 'seg' in out:
-        vt = out['vertex'] * cfg.model.vertex_scale
+        scale = cfg.model.vertex_scale if getattr(cfg.model, "use_offset", True) else 1.0
+        vt = out['vertex'] * scale
         seg = out['seg']
 
         # derive mask
@@ -77,7 +78,8 @@ def run_full_debug(model, dataset, cfg):
             vertex=vt,
             num_votes=cfg.model.ransac_voting.vote_num,
             inlier_thresh=cfg.model.ransac_voting.inlier_thresh,
-            max_trials=cfg.model.ransac_voting.max_trials
+            max_trials=cfg.model.ransac_voting.max_trials,
+            use_offset=getattr(cfg.model, "use_offset", True)
         )
 
         kp2d_pred = kp2d_pred[0].cpu().numpy()

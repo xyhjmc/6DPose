@@ -68,6 +68,7 @@ class PVNetPlus(nn.Module):
         max_trials: int = 300,
         vertex_scale: float = 1.0,
         dropout: float = 0.1,
+        use_offset: bool = True,
     ):
         super().__init__()
         self.ver_dim = ver_dim
@@ -77,6 +78,7 @@ class PVNetPlus(nn.Module):
         self.inlier_thresh = inlier_thresh
         self.max_trials = max_trials
         self.vertex_scale = vertex_scale
+        self.use_offset = use_offset
 
         backbone = backbone.lower()
         if backbone == "resnet18":
@@ -144,15 +146,16 @@ class PVNetPlus(nn.Module):
             mask_bin = torch.argmax(seg_pred, dim=1, keepdim=True).float()
 
         vertex_for_voting = vertex_pred
-        if getattr(self, "vertex_scale", 1.0) != 1.0:
+        if getattr(self, "vertex_scale", 1.0) != 1.0 and self.use_offset:
             vertex_for_voting = vertex_pred * self.vertex_scale
 
-        kpt_2d, inlier_counts = ransac_voting(
-            mask=mask_bin,
-            vertex=vertex_for_voting,
-            num_votes=self.vote_num,
-            inlier_thresh=self.inlier_thresh,
-            max_trials=self.max_trials,
+            kpt_2d, inlier_counts = ransac_voting(
+                mask=mask_bin,
+                vertex=vertex_for_voting,
+                num_votes=self.vote_num,
+                inlier_thresh=self.inlier_thresh,
+                max_trials=self.max_trials,
+                use_offset=self.use_offset,
         )
         return {"kpt_2d": kpt_2d, "inlier_counts": inlier_counts}
 

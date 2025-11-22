@@ -28,7 +28,8 @@ PVNet (PyTorch版)
 class PVNet(nn.Module):
     def __init__(self, ver_dim, seg_dim, fcdim=256, s8dim=128, s4dim=64,
                  s2dim=32, raw_dim=32, use_un_pnp=False,
-                 vote_num=512, inlier_thresh=2.0, max_trials=200,vertex_scale:float = 1.0):
+                 vote_num=512, inlier_thresh=2.0, max_trials=200,vertex_scale:float = 1.0,
+                 use_offset: bool = True):
         """
         初始化 PVNet 模型。
 
@@ -53,6 +54,7 @@ class PVNet(nn.Module):
         self.inlier_thresh = inlier_thresh
         self.max_trials = max_trials
         self.vertex_scale = vertex_scale
+        self.use_offset = use_offset
         # -------------------------------
         # 1. 骨干网 (Backbone): ResNet18
         # -------------------------------
@@ -138,7 +140,7 @@ class PVNet(nn.Module):
             mask_bin = torch.argmax(seg_pred, dim=1, keepdim=True).float()
 
         vertex_for_voting = vertex_pred
-        if getattr(self, "vertex_scale", 1.0) != 1.0:
+        if getattr(self, "vertex_scale", 1.0) != 1.0 and self.use_offset:
             vertex_for_voting = vertex_pred * self.vertex_scale
 
         # --- 2. 调用 RANSAC 投票 ---
@@ -148,7 +150,8 @@ class PVNet(nn.Module):
             vertex=vertex_pred,
             num_votes=self.vote_num,
             inlier_thresh=self.inlier_thresh,
-            max_trials=self.max_trials
+            max_trials=self.max_trials,
+            use_offset=self.use_offset,
         )
 
         # --- 3. 返回结果 ---

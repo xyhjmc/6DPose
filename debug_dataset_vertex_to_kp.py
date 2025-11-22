@@ -83,7 +83,8 @@ def build_transforms_for_debug(use_aug: bool):
     tfs.append(NormalizeAndToTensor(
         mean=DEFAULT_MEAN,
         std=DEFAULT_STD,
-        vertex_scale=VERTEX_SCALE
+        vertex_scale=VERTEX_SCALE,
+        use_offset=use_offset,
     ))
 
     return Compose(tfs)

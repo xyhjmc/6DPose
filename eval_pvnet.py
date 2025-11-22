@@ -68,6 +68,13 @@ def main():
     # 加载配置 (cfg 是一个 SimpleNamespace)
     cfg = load_config(args.config)
 
+    # use_offset=False 时强制顶点缩放为 1，并同步给模型配置
+    if not cfg.transforms.use_offset:
+        if getattr(cfg.model, "vertex_scale", 1.0) != 1.0:
+            print("[配置提示] use_offset=False 时自动将 vertex_scale 重置为 1.0。")
+        cfg.model.vertex_scale = 1.0
+    cfg.model.use_offset = cfg.transforms.use_offset
+
     # --- 2. 设置 (Seed & Device) ---
     torch.manual_seed(cfg.seed)
     np.random.seed(cfg.seed)
@@ -84,7 +91,8 @@ def main():
         NormalizeAndToTensor(
             mean=np.array(cfg.transforms.mean),
             std=np.array(cfg.transforms.std),
-            vertex_scale=cfg.model.vertex_scale
+            vertex_scale=cfg.model.vertex_scale,
+            use_offset=cfg.transforms.use_offset
         )
     ])
 

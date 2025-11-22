@@ -220,6 +220,7 @@ class Evaluator:
         self.out_dir = out_dir
         self.verbose = verbose
         self.vertex_scale = cfg.model.vertex_scale
+        self.use_offset = getattr(cfg.model, "use_offset", True)
 
         if self.out_dir:
             os.makedirs(self.out_dir, exist_ok=True)
@@ -295,7 +296,7 @@ class Evaluator:
         seg_pred = output_gpu['seg']  # (B, C_seg, H, W)
 
         # 3. 还原 vertex 到“像素偏移”尺度
-        scale = float(getattr(self, "vertex_scale", 1.0))
+        scale = float(getattr(self, "vertex_scale", 1.0)) if self.use_offset else 1.0
         vertex_px = vertex_pred * scale  # (B, 2K, H, W)
 
         # 4. 解码二值 mask（与 PVNet.decode_keypoint 逻辑对齐）
@@ -318,7 +319,8 @@ class Evaluator:
                 vertex=vertex_px,
                 num_votes=self.cfg.model.ransac_voting.vote_num,
                 inlier_thresh=self.cfg.model.ransac_voting.inlier_thresh,
-                max_trials=self.cfg.model.ransac_voting.max_trials
+                max_trials=self.cfg.model.ransac_voting.max_trials,
+                use_offset=self.use_offset
             )
 
             # 6. 转为 numpy，去掉 batch 维度 → (K, 2)
@@ -723,7 +725,7 @@ class Evaluator:
                 kp2d_gt = batch['kp2d'][i].cpu().numpy()  # (K, 2)
 
                 # 2) 恢复 vertex 到像素偏移尺度
-                scale = float(getattr(self.cfg.model, "vertex_scale", 1.0))
+                scale = float(getattr(self.cfg.model, "vertex_scale", 1.0)) if self.use_offset else 1.0
                 vertex_gt_px = vertex_gt * scale     # (2K, H, W)
 
                 # 3) 拼成 batch 维度，并放到 device 上
@@ -738,7 +740,8 @@ class Evaluator:
                         vertex_t,
                         num_votes=self.cfg.model.ransac_voting.vote_num,
                         inlier_thresh=self.cfg.model.ransac_voting.inlier_thresh,
-                        max_trials=self.cfg.model.ransac_voting.max_trials
+                        max_trials=self.cfg.model.ransac_voting.max_trials,
+                        use_offset=self.use_offset
                     )
 
                 # 5) 取出 (K,2) 关键点坐标，转 numpy
@@ -794,7 +797,7 @@ class Evaluator:
         img_mean_predmask = []
 
         n = 0
-        scale = float(getattr(self.cfg.model, "vertex_scale", 1.0))
+        scale = float(getattr(self.cfg.model, "vertex_scale", 1.0)) if self.use_offset else 1.0
 
         # 注意：这里会再跑一遍整个 dataloader 的前向
         # 但验证集不大，开 no_grad + amp 问题不大
@@ -834,7 +837,8 @@ class Evaluator:
                             vertex=vertex_i,
                             num_votes=self.cfg.model.ransac_voting.vote_num,
                             inlier_thresh=self.cfg.model.ransac_voting.inlier_thresh,
-                            max_trials=self.cfg.model.ransac_voting.max_trials
+                            max_trials=self.cfg.model.ransac_voting.max_trials,
+                            use_offset=self.use_offset
                         )
 
                     kp2d_pred_gtmask = kpts2d_gtmask_t[0].detach().cpu().numpy()  # (K, 2)
@@ -866,7 +870,8 @@ class Evaluator:
                             vertex=vertex_i,
                             num_votes=self.cfg.model.ransac_voting.vote_num,
                             inlier_thresh=self.cfg.model.ransac_voting.inlier_thresh,
-                            max_trials=self.cfg.model.ransac_voting.max_trials
+                            max_trials=self.cfg.model.ransac_voting.max_trials,
+                            use_offset=self.use_offset
                         )
 
                     kp2d_pred_predmask = kpts2d_predmask_t[0].detach().cpu().numpy()  # (K, 2)
