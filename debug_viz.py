@@ -18,12 +18,21 @@ def main():
 
     # 1. 加载配置和模型
     cfg = load_config(args.config)
+    if not cfg.transforms.use_offset and getattr(cfg.model, "vertex_scale", 1.0) != 1.0:
+        print("[配置提示] use_offset=False，debug_viz 将 vertex_scale 重置为 1.0。")
+        cfg.model.vertex_scale = 1.0
+    cfg.model.use_offset = cfg.transforms.use_offset
     device = torch.device(cfg.device)
 
-    # 强制验证集使用 offset，确保逻辑一致
+    # 验证集遵循配置的 offset 模式
     val_transforms = Compose([
-        Resize(output_size_hw=cfg.transforms.input_size_hw, use_offset=True),  # <--- 强制 True
-        NormalizeAndToTensor(mean=np.array(cfg.transforms.mean), std=np.array(cfg.transforms.std))
+        Resize(output_size_hw=cfg.transforms.input_size_hw, use_offset=cfg.transforms.use_offset),
+        NormalizeAndToTensor(
+            mean=np.array(cfg.transforms.mean),
+            std=np.array(cfg.transforms.std),
+            vertex_scale=getattr(cfg.model, "vertex_scale", 1.0),
+            use_offset=cfg.transforms.use_offset,
+        )
     ])
 
     val_dataset = BopPvnetDataset(data_dir=cfg.dataset.val_data_dir, transforms=val_transforms, split_name="val")
@@ -31,7 +40,9 @@ def main():
 
     model = PVNet(
         ver_dim=cfg.model.ver_dim, seg_dim=cfg.model.seg_dim,
-        vote_num=cfg.model.ransac_voting.vote_num, inlier_thresh=10.0, max_trials=200  # <--- 这里的阈值仅供模型内部默认使用
+        vote_num=cfg.model.ransac_voting.vote_num, inlier_thresh=10.0, max_trials=200,
+        vertex_scale=getattr(cfg.model, "vertex_scale", 1.0),
+        use_offset=getattr(cfg.model, "use_offset", True),
     ).to(device)
 
     print(f"加载权重: {args.checkpoint}")
@@ -51,7 +62,14 @@ def main():
 
             # RANSAC 投票 (使用宽阈值测试)
             mask_pred = (torch.argmax(out['seg'], dim=1) > 0).float()
-            kpt_pred, _ = ransac_voting(mask_pred, out['vertex'], num_votes=512, inlier_thresh=10.0, max_trials=500)
+            kpt_pred, _ = ransac_voting(
+                mask_pred,
+                out['vertex'],
+                num_votes=512,
+                inlier_thresh=10.0,
+                max_trials=500,
+                use_offset=getattr(cfg.model, "use_offset", True),
+            )
             kpt_pred = kpt_pred[0].cpu().numpy()
 
             # 准备可视化

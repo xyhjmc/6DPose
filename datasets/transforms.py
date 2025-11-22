@@ -328,7 +328,13 @@ class ColorJitter:
 # --------------------------------------------------------------
 
 class NormalizeAndToTensor:
-    def __init__(self, mean: np.ndarray = DEFAULT_MEAN, std: np.ndarray = DEFAULT_STD, vertex_scale: float = 1.0):
+    def __init__(
+        self,
+        mean: np.ndarray = DEFAULT_MEAN,
+        std: np.ndarray = DEFAULT_STD,
+        vertex_scale: float = 1.0,
+        use_offset: bool = True,
+    ):
         """
         Args:
             vertex_scale: 顶点场的缩放因子。
@@ -338,6 +344,7 @@ class NormalizeAndToTensor:
         self.mean = mean.reshape(1, 1, 3)
         self.std = std.reshape(1, 1, 3)
         self.vertex_scale = vertex_scale
+        self.use_offset = use_offset
 
     def __call__(self, sample: Dict[str, Any]) -> Dict[str, Any]:
 
@@ -363,7 +370,7 @@ class NormalizeAndToTensor:
             # [新增] 对顶点场进行缩放 (归一化)
             # 例如：偏移量 130.0 -> 1.3
             vertex = sample['vertex']
-            if self.vertex_scale != 1.0:
+            if self.use_offset and self.vertex_scale != 1.0:
                 vertex = vertex / self.vertex_scale
             sample['vertex'] = torch.from_numpy(vertex).float()  # (2K, H, W)
 

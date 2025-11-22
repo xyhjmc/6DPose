@@ -24,6 +24,7 @@ def build_model_from_cfg(cfg) -> PVNet:
         inlier_thresh=model_cfg.ransac_voting.inlier_thresh,
         max_trials=model_cfg.ransac_voting.max_trials,
         vertex_scale=getattr(model_cfg, "vertex_scale", 1.0),
+        use_offset=getattr(model_cfg, "use_offset", True),
     )
 
     if name == "pvnetplus":
