@@ -453,7 +453,7 @@ def ransac_voting_torch(mask: torch.Tensor,
                     rhs = torch.sum(normals_k * base_xy[mask_k], dim=1)
                     refined_center = None
                     try:
-                        refined_center = torch.linalg.lstsq(normals_k, rhs).solution
+                        refined_center = torch.linalg.lstsq(normals_k, rhs.unsqueeze(-1)).solution.squeeze(-1)
                     except Exception:
                         try:
                             refined, _ = torch.lstsq(rhs.unsqueeze(1), normals_k)  # torch<=1.10 兼容
