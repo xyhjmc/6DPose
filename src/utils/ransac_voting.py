@@ -237,15 +237,18 @@ def _ensure_batch_mask_vertex(mask: torch.Tensor, vertex: torch.Tensor
 
 
 def _intersect_rays_torch(p1: torch.Tensor, d1: torch.Tensor, p2: torch.Tensor, d2: torch.Tensor) -> Optional[torch.Tensor]:
-    A = torch.stack([d1, -d2], dim=1)
+    # torch.det 不支持 half 精度的 CUDA 张量，因此在此处显式转换到
+    # float32 进行线性求解，最终再转换回原始 dtype。
+    orig_dtype = p1.dtype
+    A = torch.stack([d1, -d2], dim=1).float()
     det = torch.det(A)
     if torch.abs(det) < 1e-6:
         return None
     try:
-        sol = torch.linalg.solve(A, p2 - p1)
+        sol = torch.linalg.solve(A, (p2 - p1).float())
     except RuntimeError:
         return None
-    return p1 + sol[0] * d1
+    return (p1.float() + sol[0] * d1.float()).to(orig_dtype)
 
 
 def _line_distance_torch(points: torch.Tensor, dirs: torch.Tensor, candidate: torch.Tensor) -> torch.Tensor:
