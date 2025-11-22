@@ -7,7 +7,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 import os
 import time
-from typing import Dict, Any
+from typing import Dict, Any, Union
 
 
 # [修复] 导入新的 AMP 模块
@@ -30,7 +30,7 @@ class Trainer:
                  model: nn.Module,
                  loss_fn: nn.Module,
                  optimizer: torch.optim.Optimizer,
-                 scheduler: torch.optim.lr_scheduler._LRScheduler,
+                 scheduler: Union[torch.optim.lr_scheduler._LRScheduler, torch.optim.lr_scheduler.ReduceLROnPlateau],
                  train_loader: DataLoader,
                  val_loader: DataLoader,
                  device: torch.device,
@@ -225,7 +225,10 @@ class Trainer:
             val_loss_dict = self.val_epoch(epoch)
             val_time = time.time() - start_time
 
-            self.scheduler.step()
+            if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                self.scheduler.step(val_loss_dict['total_loss'])
+            else:
+                self.scheduler.step()
 
             lr = self.optimizer.param_groups[0]['lr']
             self.writer.add_scalar("train_epoch/learning_rate", lr, epoch)
