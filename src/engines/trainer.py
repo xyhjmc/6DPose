@@ -135,7 +135,8 @@ class Trainer:
                             desc=f"Epoch {epoch}/{self.max_epochs} [Val]")
         epoch_losses = {}
 
-        with torch.no_grad():
+        # 在验证阶段使用 inference_mode 以获得更好的执行效率
+        with torch.inference_mode():
             for batch in progress_bar:
                 # 1. [修改] 使用外部工具函数
                 batch = move_batch_to_device(batch, self.device)
