@@ -55,6 +55,8 @@ class PVNet(nn.Module):
         self.max_trials = max_trials
         self.vertex_scale = vertex_scale
         self.use_offset = use_offset
+        # 在 eval 模式下是否执行 RANSAC 解码 (验证时可临时关闭以提升速度)
+        self.decode_in_eval: bool = True
         # -------------------------------
         # 1. 骨干网 (Backbone): ResNet18
         # -------------------------------
@@ -205,7 +207,7 @@ class PVNet(nn.Module):
         ret = {'seg': seg_pred, 'vertex': ver_pred}
 
         # --- 4. 推理时解码 ---
-        if not self.training:
+        if (not self.training) and getattr(self, "decode_in_eval", True):
             #  修复: 正确调用 decode_keypoint 并更新 (update) 字典
             decoded_output = self.decode_keypoint(seg_pred, ver_pred)
             ret.update(decoded_output)
