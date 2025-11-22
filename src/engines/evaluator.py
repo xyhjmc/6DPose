@@ -455,27 +455,27 @@ class Evaluator:
 
         first_batch = True  # 放到 evaluate() 函数最上面（for batch 之前）
 
-        for batch in it:
+        with torch.inference_mode():
+            for batch in it:
 
-            if first_batch:
-                print("[DEBUG_BATCH] batch keys:", list(batch.keys()))
-                # 如果 meta 里还有子字段，也可以看一下
-                if 'meta' in batch:
-                    print("[DEBUG_BATCH] meta[0] keys:", batch['meta'][0].keys())
-                first_batch = False
+                if first_batch:
+                    print("[DEBUG_BATCH] batch keys:", list(batch.keys()))
+                    # 如果 meta 里还有子字段，也可以看一下
+                    if 'meta' in batch:
+                        print("[DEBUG_BATCH] meta[0] keys:", batch['meta'][0].keys())
+                    first_batch = False
 
-            # 1. 将数据移动到 GPU
-            batch_gpu = move_to_device(batch, self.device)
+                # 1. 将数据移动到 GPU
+                batch_gpu = move_to_device(batch, self.device)
 
-            with torch.no_grad():
                 with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
                     # 2. 模型前向传播 (B,C,H,W) -> Dict[str, Tensor]
                     outputs_gpu = self.model(batch_gpu['inp'])
 
-            B = batch['inp'].shape[0]  # 批量大小
+                B = batch['inp'].shape[0]  # 批量大小
 
-            # 2.5. 先对整个 batch 解码一次 kp2d，避免单样本重复触发 RANSAC GPU kernel
-            kp2d_batch = self._decode_kp2d_from_output(outputs_gpu, keep_batch_dim=True)
+                # 2.5. 先对整个 batch 解码一次 kp2d，避免单样本重复触发 RANSAC GPU kernel
+                kp2d_batch = self._decode_kp2d_from_output(outputs_gpu, keep_batch_dim=True)
 
             # 3. 逐个样本处理 (PnP 是非批量的)
             for i in range(B):
