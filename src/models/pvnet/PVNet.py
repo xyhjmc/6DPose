@@ -29,7 +29,7 @@ class PVNet(nn.Module):
     def __init__(self, ver_dim, seg_dim, fcdim=256, s8dim=128, s4dim=64,
                  s2dim=32, raw_dim=32, use_un_pnp=False,
                  vote_num=512, inlier_thresh=2.0, max_trials=200,vertex_scale:float = 1.0,
-                 use_offset: bool = True):
+                 use_offset: bool = True, legacy_unit_voting: bool = False):
         """
         初始化 PVNet 模型。
 
@@ -55,6 +55,7 @@ class PVNet(nn.Module):
         self.max_trials = max_trials
         self.vertex_scale = vertex_scale
         self.use_offset = use_offset
+        self.legacy_unit_voting = legacy_unit_voting
         # 在 eval 模式下是否执行 RANSAC 解码 (验证时可临时关闭以提升速度)
         self.decode_in_eval: bool = True
         # -------------------------------
@@ -154,6 +155,7 @@ class PVNet(nn.Module):
             inlier_thresh=self.inlier_thresh,
             max_trials=self.max_trials,
             use_offset=self.use_offset,
+            legacy_unit_voting=self.legacy_unit_voting,
         )
 
         # --- 3. 返回结果 ---
