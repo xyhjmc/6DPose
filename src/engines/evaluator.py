@@ -477,86 +477,86 @@ class Evaluator:
                 # 2.5. 先对整个 batch 解码一次 kp2d，避免单样本重复触发 RANSAC GPU kernel
                 kp2d_batch = self._decode_kp2d_from_output(outputs_gpu, keep_batch_dim=True)
 
-            # 3. 逐个样本处理 (PnP 是非批量的)
-            for i in range(B):
-                # [接口对齐] 提取第 i 个样本的 GT (在 CPU 上)
-                gt = {
-                    'K': batch['K'][i].cpu().numpy(),
-                    'R': batch['R'][i].cpu().numpy(),
-                    't': batch['t'][i].cpu().numpy(),
-                    'kp3d': batch['kp3d'][i].cpu().numpy(),
-                    'obj_id': int(batch['meta'][i]['obj_id']),
-                    'scene_id': int(batch['meta'][i]['scene_id']),
-                    'im_id': int(batch['meta'][i]['im_id']),
-                }
-                kp2d_np = None
-                for k2d_key in ['kp2d', 'kp_2d', 'kpt_2d', 'kpt2d', 'corner_2d', 'corners_2d']:
-                    if k2d_key in batch:
-                        kp2d_np = batch[k2d_key][i].cpu().numpy()
-                        #print(f"[DEBUG_PNP_GT] 使用 GT 2D 字段 '{k2d_key}', 形状={kp2d_np.shape}")
-                        break
+                # 3. 逐个样本处理 (PnP 是非批量的)
+                for i in range(B):
+                    # [接口对齐] 提取第 i 个样本的 GT (在 CPU 上)
+                    gt = {
+                        'K': batch['K'][i].cpu().numpy(),
+                        'R': batch['R'][i].cpu().numpy(),
+                        't': batch['t'][i].cpu().numpy(),
+                        'kp3d': batch['kp3d'][i].cpu().numpy(),
+                        'obj_id': int(batch['meta'][i]['obj_id']),
+                        'scene_id': int(batch['meta'][i]['scene_id']),
+                        'im_id': int(batch['meta'][i]['im_id']),
+                    }
+                    kp2d_np = None
+                    for k2d_key in ['kp2d', 'kp_2d', 'kpt_2d', 'kpt2d', 'corner_2d', 'corners_2d']:
+                        if k2d_key in batch:
+                            kp2d_np = batch[k2d_key][i].cpu().numpy()
+                            #print(f"[DEBUG_PNP_GT] 使用 GT 2D 字段 '{k2d_key}', 形状={kp2d_np.shape}")
+                            break
 
-                if kp2d_np is not None:
-                    gt['kp2d'] = kp2d_np
-                # 提取第 i 个样本的预测 (在 GPU 上，保持批次维度 [1, ...])
-                pred_gpu = {k: v[i:i + 1] for k, v in outputs_gpu.items()
-                            if isinstance(v, torch.Tensor)}
-                # 解码预测的 2D 关键点（用于后续 PnP debug）
-                kp2d_pred_np = None
-                if kp2d_batch is not None and i < len(kp2d_batch):
-                    # 直接复用批量结果，避免重复 GPU/CPU 往返
-                    kp2d_pred_np = kp2d_batch[i]
-                # 4. [改进] 调用重构后的“智能推理链”
-                # --- DEBUG START: 仅打印前 3 个样本 ---
-                if len(all_pred_dicts_for_bop) < 3:
-                    print(f"\n\n[DEBUG] 正在检查第 {len(all_pred_dicts_for_bop)} 个样本:")
+                    if kp2d_np is not None:
+                        gt['kp2d'] = kp2d_np
+                    # 提取第 i 个样本的预测 (在 GPU 上，保持批次维度 [1, ...])
+                    pred_gpu = {k: v[i:i + 1] for k, v in outputs_gpu.items()
+                                if isinstance(v, torch.Tensor)}
+                    # 解码预测的 2D 关键点（用于后续 PnP debug）
+                    kp2d_pred_np = None
+                    if kp2d_batch is not None and i < len(kp2d_batch):
+                        # 直接复用批量结果，避免重复 GPU/CPU 往返
+                        kp2d_pred_np = kp2d_batch[i]
+                    # 4. [改进] 调用重构后的“智能推理链”
+                    # --- DEBUG START: 仅打印前 3 个样本 ---
+                    if len(all_pred_dicts_for_bop) < 3:
+                        print(f"\n\n[DEBUG] 正在检查第 {len(all_pred_dicts_for_bop)} 个样本:")
 
-                    # 1. 检查 GT 3D 点 (kp3d)
-                    k3 = gt['kp3d']
-                    print(f"  > GT kp3d (前3个): \n{k3[:3]}")
-                    print(f"  > GT kp3d 范围: min={k3.min():.2f}, max={k3.max():.2f}")
-                    # 正常情况: LINEMOD 钻头直径约 200mm，所以值应该在 -100 到 +100 左右
+                        # 1. 检查 GT 3D 点 (kp3d)
+                        k3 = gt['kp3d']
+                        print(f"  > GT kp3d (前3个): \n{k3[:3]}")
+                        print(f"  > GT kp3d 范围: min={k3.min():.2f}, max={k3.max():.2f}")
+                        # 正常情况: LINEMOD 钻头直径约 200mm，所以值应该在 -100 到 +100 左右
 
-                    # 2. 检查预测的 2D 点 (kp2d_pred)
-                    if kp2d_pred_np is not None:
-                        print(f"  > Pred kp2d (前3个): \n{kp2d_pred_np[:3]}")
-                        print(f"  > Pred kp2d 范围: min={kp2d_pred_np.min():.2f}, max={kp2d_pred_np.max():.2f}")
+                        # 2. 检查预测的 2D 点 (kp2d_pred)
+                        if kp2d_pred_np is not None:
+                            print(f"  > Pred kp2d (前3个): \n{kp2d_pred_np[:3]}")
+                            print(f"  > Pred kp2d 范围: min={kp2d_pred_np.min():.2f}, max={kp2d_pred_np.max():.2f}")
+                        else:
+                            print("  > Pred kp2d: 解码失败 (None)")
+
+                        # 3. 检查内参 (K)
+                        k_mat = gt['K']
+                        print(f"  > K (0,0)={k_mat[0, 0]:.2f}, (0,2)={k_mat[0, 2]:.2f}")
+
+                        # 4. 检查最终解算的姿态 (R, t)
+                        R_pred, t_pred = self._get_pose_from_output(pred_gpu, gt, kp2d_pred_np)
+                        print(f"  > 结果 R_pred:\n{R_pred}")
+                        print(f"  > 结果 t_pred: {t_pred}")
+                        # 正常情况: t_pred 应该是 [x, y, z]，z 大约在 500~1500 (mm) 之间
+                        # 异常情况: 如果 z 是 3.0e+14，那就是 PnP 炸了
                     else:
-                        print("  > Pred kp2d: 解码失败 (None)")
+                        # 正常运行
+                        R_pred, t_pred = self._get_pose_from_output(pred_gpu, gt, kp2d_pred_np)
+                    # --- DEBUG END ---
 
-                    # 3. 检查内参 (K)
-                    k_mat = gt['K']
-                    print(f"  > K (0,0)={k_mat[0, 0]:.2f}, (0,2)={k_mat[0, 2]:.2f}")
+                    # 5. 组装 BOP 格式的 pred 和 gt 字典
+                    pred_dict = {
+                        'obj_id': gt['obj_id'],
+                        'scene_id': gt['scene_id'],
+                        'im_id': gt['im_id'],
+                        'R': R_pred if R_pred is not None else np.eye(3),
+                        't': t_pred if t_pred is not None else np.zeros(3),
+                        'score': 1.0 if R_pred is not None else 0.0
+                    }
+                    if kp2d_pred_np is not None:
+                        pred_dict['kp2d_pred'] = kp2d_pred_np
+                    gt_dict = {
+                        k: v for k, v in gt.items()
+                        if k in ['obj_id', 'scene_id', 'im_id', 'R', 't', 'kp3d', 'kp2d', 'K']
+                    }
 
-                    # 4. 检查最终解算的姿态 (R, t)
-                    R_pred, t_pred = self._get_pose_from_output(pred_gpu, gt, kp2d_pred_np)
-                    print(f"  > 结果 R_pred:\n{R_pred}")
-                    print(f"  > 结果 t_pred: {t_pred}")
-                    # 正常情况: t_pred 应该是 [x, y, z]，z 大约在 500~1500 (mm) 之间
-                    # 异常情况: 如果 z 是 3.0e+14，那就是 PnP 炸了
-                else:
-                    # 正常运行
-                    R_pred, t_pred = self._get_pose_from_output(pred_gpu, gt, kp2d_pred_np)
-                # --- DEBUG END ---
-
-                # 5. 组装 BOP 格式的 pred 和 gt 字典
-                pred_dict = {
-                    'obj_id': gt['obj_id'],
-                    'scene_id': gt['scene_id'],
-                    'im_id': gt['im_id'],
-                    'R': R_pred if R_pred is not None else np.eye(3),
-                    't': t_pred if t_pred is not None else np.zeros(3),
-                    'score': 1.0 if R_pred is not None else 0.0
-                }
-                if kp2d_pred_np is not None:
-                    pred_dict['kp2d_pred'] = kp2d_pred_np
-                gt_dict = {
-                    k: v for k, v in gt.items()
-                    if k in ['obj_id', 'scene_id', 'im_id', 'R', 't', 'kp3d', 'kp2d', 'K']
-                }
-
-                all_pred_dicts_for_bop.append(pred_dict)
-                all_gt_dicts_for_bop.append(gt_dict)
+                    all_pred_dicts_for_bop.append(pred_dict)
+                    all_gt_dicts_for_bop.append(gt_dict)
 
         # 循环结束
 
