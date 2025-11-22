@@ -48,7 +48,8 @@ def ransac_voting_cpu(mask: np.ndarray,
                       inlier_thresh: float = 2.0,
                       max_trials: int = 200,
                       seed: Optional[int] = None,
-                      use_offset: bool = True) -> np.ndarray:
+                      use_offset: bool = True,
+                      legacy_unit_voting: bool = False) -> np.ndarray:
     """
     [CPU版] RANSAC 风格投票，用于从 PVNet 顶点场 (vertex field) 计算关键点位置。
 
@@ -265,7 +266,8 @@ def ransac_voting_torch(mask: torch.Tensor,
                         max_trials: int = 200,
                         replace: bool = False,
                         seed: Optional[int] = None,
-                        use_offset: bool = True) -> Tuple[torch.Tensor, torch.Tensor]:
+                        use_offset: bool = True,
+                        legacy_unit_voting: bool = False) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     [PyTorch/GPU版] RANSAC 投票 (向量化实现)。
 
@@ -277,6 +279,7 @@ def ransac_voting_torch(mask: torch.Tensor,
       max_trials: (int) RANSAC 迭代次数
       replace: (bool) 采样时是否允许重复
       seed: (int) 随机种子
+      legacy_unit_voting: (bool) 当 use_offset=False 时使用旧版逐 trial 的实现
 
     返回:
       kpts2d: (B, K, 2) - 估计的关键点 (x, y)
@@ -379,6 +382,45 @@ def ransac_voting_torch(mask: torch.Tensor,
                     final_centers[k] = inlier_votes.mean(dim=0)
                 else:
                     final_centers[k] = candidates[best_trial_k, k]
+        elif legacy_unit_voting:
+            dirs_sample = vertex_sample  # (n_sample, K, 2) 方向
+            for k in range(K):
+                dirs_k = dirs_sample[:, k]
+                if n_sample < 2:
+                    final_centers[k] = base_xy.mean(dim=0)
+                    best_counts[k] = 0
+                    continue
+
+                best_count = -1
+                best_center = base_xy.mean(dim=0)
+
+                for _ in range(n_trials):
+                    pair = torch.randperm(n_sample, device=device)[:2]
+                    inter = _intersect_rays_torch(base_xy[pair[0]], dirs_k[pair[0]], base_xy[pair[1]], dirs_k[pair[1]])
+                    if inter is None:
+                        continue
+
+                    dists = _line_distance_torch(base_xy, dirs_k, inter)
+                    inlier_mask = dists <= inlier_thresh
+                    cnt = int(inlier_mask.sum().item())
+
+                    if cnt > best_count:
+                        best_count = cnt
+                        normals = torch.stack([-dirs_k[inlier_mask, 1], dirs_k[inlier_mask, 0]], dim=1)
+                        rhs = torch.sum(normals * base_xy[inlier_mask], dim=1)
+                        refined_center = None
+                        try:
+                            refined_center = torch.linalg.lstsq(normals, rhs).solution
+                        except Exception:
+                            try:
+                                refined, _ = torch.lstsq(rhs.unsqueeze(1), normals)  # torch<=1.10 兼容
+                                refined_center = refined[:2, 0]
+                            except Exception:
+                                refined_center = None
+                        best_center = refined_center if refined_center is not None else inter
+
+                final_centers[k] = best_center
+                best_counts[k] = max(best_count, 0)
         else:
             # --- unit-vector 模式的向量化 RANSAC ---
             if n_sample < 2:

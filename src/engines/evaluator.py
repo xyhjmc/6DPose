@@ -224,6 +224,7 @@ class Evaluator:
         self.enable_debug = enable_debug
         self.vertex_scale = cfg.model.vertex_scale
         self.use_offset = getattr(cfg.model, "use_offset", True)
+        self.legacy_unit_voting = getattr(cfg.model.ransac_voting, "legacy_unit_voting", False)
 
         if self.out_dir:
             os.makedirs(self.out_dir, exist_ok=True)
@@ -323,7 +324,8 @@ class Evaluator:
                 num_votes=self.cfg.model.ransac_voting.vote_num,
                 inlier_thresh=self.cfg.model.ransac_voting.inlier_thresh,
                 max_trials=self.cfg.model.ransac_voting.max_trials,
-                use_offset=self.use_offset
+                use_offset=self.use_offset,
+                legacy_unit_voting=self.legacy_unit_voting,
             )
 
             # 6. 转为 numpy (默认去掉 batch 维度，与旧接口兼容)
@@ -752,7 +754,8 @@ class Evaluator:
                         num_votes=self.cfg.model.ransac_voting.vote_num,
                         inlier_thresh=self.cfg.model.ransac_voting.inlier_thresh,
                         max_trials=self.cfg.model.ransac_voting.max_trials,
-                        use_offset=self.use_offset
+                        use_offset=self.use_offset,
+                        legacy_unit_voting=self.legacy_unit_voting,
                     )
 
                 # 5) 取出 (K,2) 关键点坐标，转 numpy
@@ -849,7 +852,8 @@ class Evaluator:
                             num_votes=self.cfg.model.ransac_voting.vote_num,
                             inlier_thresh=self.cfg.model.ransac_voting.inlier_thresh,
                             max_trials=self.cfg.model.ransac_voting.max_trials,
-                            use_offset=self.use_offset
+                            use_offset=self.use_offset,
+                            legacy_unit_voting=self.legacy_unit_voting,
                         )
 
                     kp2d_pred_gtmask = kpts2d_gtmask_t[0].detach().cpu().numpy()  # (K, 2)
@@ -882,7 +886,8 @@ class Evaluator:
                             num_votes=self.cfg.model.ransac_voting.vote_num,
                             inlier_thresh=self.cfg.model.ransac_voting.inlier_thresh,
                             max_trials=self.cfg.model.ransac_voting.max_trials,
-                            use_offset=self.use_offset
+                            use_offset=self.use_offset,
+                            legacy_unit_voting=self.legacy_unit_voting,
                         )
 
                     kp2d_pred_predmask = kpts2d_predmask_t[0].detach().cpu().numpy()  # (K, 2)

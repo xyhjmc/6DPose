@@ -65,6 +65,8 @@ def main():
     parser.add_argument("--debug", default=False,action="store_true", help="运行单样本全流程调试，然后退出")
     parser.add_argument("--debug_metrics", default=False, action="store_true",
                         help="开启耗时的调试度量（PnP/ADD/投票实验）。默认关闭以加速评估。")
+    parser.add_argument("--legacy_unit_ransac", default=False, action="store_true",
+                        help="使用 use_offset=False 时的旧版（非向量化）RANSAC 实现。")
     args = parser.parse_args()
 
     # 加载配置 (cfg 是一个 SimpleNamespace)
@@ -76,6 +78,8 @@ def main():
             print("[配置提示] use_offset=False 时自动将 vertex_scale 重置为 1.0。")
         cfg.model.vertex_scale = 1.0
     cfg.model.use_offset = cfg.transforms.use_offset
+    if args.legacy_unit_ransac:
+        cfg.model.ransac_voting.legacy_unit_voting = True
 
     # --- 2. 设置 (Seed & Device) ---
     torch.manual_seed(cfg.seed)
