@@ -68,7 +68,7 @@ model:
     vote_num: 512
     inlier_thresh: 2.0
     max_trials: 200
-    legacy_unit_voting: false
+
 
 # --- 5. 损失函数参数 ---
 loss:

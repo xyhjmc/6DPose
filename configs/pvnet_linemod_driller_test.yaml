@@ -12,14 +12,14 @@ defaults:
 
 # --- 覆盖：路径设置 ---
 run:
-  log_dir: "./logs/pvnet_linemod_driller_all"
-  checkpoint_dir: "./checkpoints/pvnet_linemod_driller_all"
+  log_dir: "./logs/pvnet_linemod_driller_test"
+  checkpoint_dir: "./checkpoints/pvnet_linemod_driller_test"
 
 # --- 覆盖：数据集路径 ---
 dataset:
   data_root: "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet"
   # (假设 'ape' 的训练和验证 .npz 都在同一个目录)
-  train_data_dir: "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet/driller_all"
+  train_data_dir: "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet/driller_test"
   val_data_dir: "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet/driller_test"
   num_workers: 8
   pin_memory: true
@@ -80,12 +80,12 @@ optimizer:
 # --- 7. 学习率调度器 ---
 scheduler:
   type: "MultiStepLR"
-  milestones: [24, 30]
-  gamma: 0.1
+  milestones: [15, 25,35,45]
+  gamma: 0.5
 
 # --- 8. 训练引擎参数 ---
 train:
-  max_epochs: 36
+  max_epochs: 50
   use_amp: true
   log_interval: 25
 

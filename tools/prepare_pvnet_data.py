@@ -709,9 +709,9 @@ def clean_index_file(out_dir: str, errors_path: str, logger: logging.Logger,
 def parse_args():
     p = argparse.ArgumentParser(description="Prepare BOP dataset for PVNet (professional)")
     p.add_argument("--data-root", required=False, default="/home/xyh/datasets/LM(BOP)/lm",help="BOP dataset root (contains models/, scenes/)")
-    p.add_argument("--dataset-split", required=False,default="test" ,help="split folder (e.g. train_pbr)")
+    p.add_argument("--dataset-split", required=False,default="train_pbr" ,help="split folder (e.g. train_pbr)")
     p.add_argument("--obj-id", required=False,default=8 ,type=int, help="object ID (int)")
-    p.add_argument("--out-dir", required=False, default="/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet/driller_test",help="output directory for .npz files")
+    p.add_argument("--out-dir", required=False, default="/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet/driller_all",help="output directory for .npz files")
     p.add_argument("--num-kp", type=int, default=9, help="number of keypoints K")
     p.add_argument("--kp3d-path", default=None, help="optional .npy with (K,3) keypoints")
     p.add_argument("--use-offset", default=False,action='store_true', help="generate offset maps (pixel units) instead of unit vectors")

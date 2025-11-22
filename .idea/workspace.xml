@@ -4,46 +4,21 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="381a7172-5ab5-4041-a888-6e83040e4971" name="更改" comment="首次提交">
-      <change afterPath="$PROJECT_DIR$/.gitignore " afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/.gitignore" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/6DPose.iml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/Project_Default.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/profiles_settings.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/configs/config.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/configs/default.yaml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/configs/pvnet_linemod_driller.yaml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/configs/pvnet_linemod_driller_less.yaml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/configs/pvnet_linemod_driller_less_old.yaml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/configs/pvnet_linemod_driller_more.yaml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/configs/pvnet_linemod_driller_not_pbr.yaml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/datasets/bop_pvnet_dataset.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/datasets/transforms.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/debug.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/debug_full_pipeline.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/debug_viz.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/eval_pvnet.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/engines/evaluator.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/engines/evaluator_new.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/engines/trainer.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/losses/alternate_losses.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/losses/pvnet/pvnet_loss.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/metrics/bop_eval.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/models/pvnet/PVNet.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/models/pvnet/resnet.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/utils/geometry.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/utils/mesh.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/utils/ransac_voting.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/utils/torch_utils.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/utils/train_model_utils.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/utils/viz.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/strcuture" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/tools/prepare_pvnet_data.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/train_pvnet.py" afterDir="false" />
+    <list default="true" id="381a7172-5ab5-4041-a888-6e83040e4971" name="更改" comment="补充提交11.22">
+      <change afterPath="$PROJECT_DIR$/configs/pvnet_linemod_driller_test.yaml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/6DPose.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/6DPose.iml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/configs/default.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/configs/default.yaml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/configs/pvnet_linemod_driller_all.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/configs/pvnet_linemod_driller_all.yaml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/eval_pvnet.py" beforeDir="false" afterPath="$PROJECT_DIR$/eval_pvnet.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/engines/evaluator.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/engines/evaluator.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/engines/trainer.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/engines/trainer.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/models/pvnet/PVNet.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/models/pvnet/PVNet.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/models/pvnet/PVNetPlus.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/models/pvnet/PVNetPlus.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/models/pvnet/factory.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/models/pvnet/factory.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/utils/ransac_voting.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/utils/ransac_voting.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tools/prepare_pvnet_data.py" beforeDir="false" afterPath="$PROJECT_DIR$/tools/prepare_pvnet_data.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/train_pvnet.py" beforeDir="false" afterPath="$PROJECT_DIR$/train_pvnet.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -60,18 +35,18 @@
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
-  <component name="GitHubPullRequestSearchHistory"><![CDATA[{
-  "lastFilter": {
-    "state": "OPEN",
-    "assignee": "xyhjmc"
+  <component name="GitHubPullRequestSearchHistory">{
+  &quot;lastFilter&quot;: {
+    &quot;state&quot;: &quot;OPEN&quot;,
+    &quot;assignee&quot;: &quot;xyhjmc&quot;
   }
-}]]></component>
-  <component name="GithubPullRequestsUISettings"><![CDATA[{
-  "selectedUrlAndAccountId": {
-    "url": "https://github.com/xyhjmc/6DPose.git",
-    "accountId": "f129b1d2-4cc3-4a55-8968-1a881022af0d"
+}</component>
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;https://github.com/xyhjmc/6DPose.git&quot;,
+    &quot;accountId&quot;: &quot;f129b1d2-4cc3-4a55-8968-1a881022af0d&quot;
   }
-}]]></component>
+}</component>
   <component name="HighlightingSettingsPerFile">
     <setting file="file://$PROJECT_DIR$/src/utils/torch_utils.py" root0="FORCE_HIGHLIGHTING" />
   </component>
@@ -90,7 +65,10 @@
     "Python.bop_pvnet_dataset.executor": "Run",
     "Python.config.executor": "Run",
     "Python.debug.executor": "Run",
+    "Python.debug_dataset_vertex_to_kp.executor": "Run",
     "Python.debug_full_pipeline.executor": "Run",
+    "Python.debug_mask_vertex.executor": "Run",
+    "Python.debug_vertex_to_kp.executor": "Run",
     "Python.debug_viz.executor": "Run",
     "Python.eval_pvnet.executor": "Run",
     "Python.evaluator.executor": "Run",
@@ -106,15 +84,15 @@
     "RunOnceActivity.ShowReadmeOnStart": "true",
     "RunOnceActivity.git.unshallow": "true",
     "git-widget-placeholder": "master",
-    "last_opened_file_path": "/home/xyh/PycharmProjects/6DPose/src/engines",
+    "last_opened_file_path": "/home/xyh/PycharmProjects/6DPose/configs",
     "settings.editor.selected.configurable": "preferences.pluginManager"
   }
 }]]></component>
   <component name="RecentsManager">
     <key name="CopyFile.RECENT_KEYS">
-      <recent name="$PROJECT_DIR$/src/engines" />
       <recent name="$PROJECT_DIR$/configs" />
       <recent name="$PROJECT_DIR$/data/linemod_pvnet" />
+      <recent name="$PROJECT_DIR$/src/engines" />
     </key>
     <key name="MoveFile.RECENT_KEYS">
       <recent name="$PROJECT_DIR$/src" />
@@ -136,11 +114,48 @@
       <option name="presentableId" value="Default" />
       <updated>1763000124917</updated>
     </task>
+    <task id="LOCAL-00001" summary="补充提交11.22">
+      <option name="closed" value="true" />
+      <created>1763805231824</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1763805231824</updated>
+    </task>
+    <option name="localTasksCounter" value="2" />
     <servers />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="RECENT_FILTERS">
+      <map>
+        <entry key="Branch">
+          <value>
+            <list>
+              <RecentGroup>
+                <option name="FILTER_VALUES">
+                  <option value="origin/master" />
+                </option>
+              </RecentGroup>
+              <RecentGroup>
+                <option name="FILTER_VALUES">
+                  <option value="HEAD" />
+                </option>
+              </RecentGroup>
+              <RecentGroup>
+                <option name="FILTER_VALUES">
+                  <option value="master" />
+                </option>
+              </RecentGroup>
+            </list>
+          </value>
+        </entry>
+      </map>
+    </option>
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="?" />
     <MESSAGE value="首次提交" />
-    <option name="LAST_COMMIT_MESSAGE" value="首次提交" />
+    <MESSAGE value="补充提交11.22" />
+    <option name="LAST_COMMIT_MESSAGE" value="补充提交11.22" />
   </component>
 </project>

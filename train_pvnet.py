@@ -71,11 +71,6 @@ def main():
     np.random.seed(cfg.seed)
     random.seed(cfg.seed)
     device = torch.device(cfg.device)
-    if device.type.startswith("cuda") and not torch.cuda.is_available():
-        print("[警告] 配置请求 CUDA，但当前环境不可用，自动切换到 CPU 并禁用 AMP。")
-        device = torch.device("cpu")
-        cfg.device = "cpu"
-        cfg.train.use_amp = False
 
     # 对于固定输入分辨率的模型，启用 cuDNN benchmark 可以加速卷积算子选择
     if torch.cuda.is_available():

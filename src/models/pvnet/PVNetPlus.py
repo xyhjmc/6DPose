@@ -69,7 +69,6 @@ class PVNetPlus(nn.Module):
         vertex_scale: float = 1.0,
         dropout: float = 0.1,
         use_offset: bool = True,
-        legacy_unit_voting: bool = False,
     ):
         super().__init__()
         self.ver_dim = ver_dim
@@ -80,7 +79,6 @@ class PVNetPlus(nn.Module):
         self.max_trials = max_trials
         self.vertex_scale = vertex_scale
         self.use_offset = use_offset
-        self.legacy_unit_voting = legacy_unit_voting
         # 控制 eval 模式下是否执行 RANSAC 解码（验证时可关闭以提升速度）
         self.decode_in_eval: bool = True
 
@@ -160,7 +158,6 @@ class PVNetPlus(nn.Module):
                 inlier_thresh=self.inlier_thresh,
                 max_trials=self.max_trials,
                 use_offset=self.use_offset,
-                legacy_unit_voting=self.legacy_unit_voting,
         )
         return {"kpt_2d": kpt_2d, "inlier_counts": inlier_counts}
 

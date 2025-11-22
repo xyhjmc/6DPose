@@ -217,14 +217,12 @@ class Evaluator:
         self.model = model.to(device).eval()
         self.dataloader = dataloader
         self.device = device
-        self.use_amp = (self.device.type == 'cuda') and torch.cuda.is_available()
         self.cfg = cfg
         self.out_dir = out_dir
         self.verbose = verbose
         self.enable_debug = enable_debug
         self.vertex_scale = cfg.model.vertex_scale
         self.use_offset = getattr(cfg.model, "use_offset", True)
-        self.legacy_unit_voting = getattr(cfg.model.ransac_voting, "legacy_unit_voting", False)
 
         if self.out_dir:
             os.makedirs(self.out_dir, exist_ok=True)
@@ -276,7 +274,7 @@ class Evaluator:
         print(f"[Evaluator] 成功为 {len(lookup)} 个模型加载了点云。")
         return lookup
 
-    def _decode_kp2d_from_output(self, output_gpu: Dict[str, Any], keep_batch_dim: bool = False) -> Optional[np.ndarray]:
+    def _decode_kp2d_from_output(self, output_gpu: Dict[str, Any]) -> Optional[np.ndarray]:
         """
         使用 PVNet 正统的 vertex + seg + RANSAC 解码 2D 关键点。
 
@@ -324,14 +322,12 @@ class Evaluator:
                 num_votes=self.cfg.model.ransac_voting.vote_num,
                 inlier_thresh=self.cfg.model.ransac_voting.inlier_thresh,
                 max_trials=self.cfg.model.ransac_voting.max_trials,
-                use_offset=self.use_offset,
-                legacy_unit_voting=self.legacy_unit_voting,
+                use_offset=self.use_offset
             )
 
-            # 6. 转为 numpy (默认去掉 batch 维度，与旧接口兼容)
+            # 6. 转为 numpy，去掉 batch 维度 → (K, 2)
             kp2d_np = kpts2d_t.detach().cpu().numpy().astype(np.float32)  # (B, K, 2)
-            if not keep_batch_dim and kp2d_np.shape[0] == 1:
-                kp2d_np = kp2d_np[0]
+            kp2d_np = np.squeeze(kp2d_np, axis=0)  # 这里 B=1，所以 squeeze 掉 batch 维
 
             return kp2d_np
 
@@ -399,8 +395,7 @@ class Evaluator:
 
     def _get_pose_from_output(self,
                               output_gpu: Dict[str, Any],
-                              gt_data: Dict[str, Any],
-                              kp2d_pred_np: Optional[np.ndarray] = None) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+                              gt_data: Dict[str, Any]) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
         """
         [改进] 封装“智能推理链” (您的 Problem 3)。
 
@@ -417,8 +412,7 @@ class Evaluator:
 
         # 2. 尝试从 2D 关键点解算 (PnP)
         #    (内部会处理 PVNet 'vertex'/'seg' 的情况)
-        if kp2d_pred_np is None:
-            kp2d_pred_np = self._decode_kp2d_from_output(output_gpu)
+        kp2d_pred_np = self._decode_kp2d_from_output(output_gpu)
 
         if kp2d_pred_np is not None:
             # 3. 解算 PnP
@@ -457,27 +451,24 @@ class Evaluator:
 
         first_batch = True  # 放到 evaluate() 函数最上面（for batch 之前）
 
-        with torch.inference_mode():
-            for batch in it:
+        for batch in it:
 
-                if first_batch:
-                    print("[DEBUG_BATCH] batch keys:", list(batch.keys()))
-                    # 如果 meta 里还有子字段，也可以看一下
-                    if 'meta' in batch:
-                        print("[DEBUG_BATCH] meta[0] keys:", batch['meta'][0].keys())
-                    first_batch = False
+            if first_batch:
+                print("[DEBUG_BATCH] batch keys:", list(batch.keys()))
+                # 如果 meta 里还有子字段，也可以看一下
+                if 'meta' in batch:
+                    print("[DEBUG_BATCH] meta[0] keys:", batch['meta'][0].keys())
+                first_batch = False
 
-                # 1. 将数据移动到 GPU
-                batch_gpu = move_to_device(batch, self.device)
+            # 1. 将数据移动到 GPU
+            batch_gpu = move_to_device(batch, self.device)
 
-                with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
+            with torch.no_grad():
+                with torch.amp.autocast(device_type='cuda', enabled=torch.cuda.is_available()):
                     # 2. 模型前向传播 (B,C,H,W) -> Dict[str, Tensor]
                     outputs_gpu = self.model(batch_gpu['inp'])
 
-                B = batch['inp'].shape[0]  # 批量大小
-
-                # 2.5. 先对整个 batch 解码一次 kp2d，避免单样本重复触发 RANSAC GPU kernel
-                kp2d_batch = self._decode_kp2d_from_output(outputs_gpu, keep_batch_dim=True)
+            B = batch['inp'].shape[0]  # 批量大小
 
             # 3. 逐个样本处理 (PnP 是非批量的)
             for i in range(B):
@@ -504,10 +495,7 @@ class Evaluator:
                 pred_gpu = {k: v[i:i + 1] for k, v in outputs_gpu.items()
                             if isinstance(v, torch.Tensor)}
                 # 解码预测的 2D 关键点（用于后续 PnP debug）
-                kp2d_pred_np = None
-                if kp2d_batch is not None and i < len(kp2d_batch):
-                    # 直接复用批量结果，避免重复 GPU/CPU 往返
-                    kp2d_pred_np = kp2d_batch[i]
+                kp2d_pred_np = self._decode_kp2d_from_output(pred_gpu)
                 # 4. [改进] 调用重构后的“智能推理链”
                 # --- DEBUG START: 仅打印前 3 个样本 ---
                 if len(all_pred_dicts_for_bop) < 3:
@@ -520,6 +508,8 @@ class Evaluator:
                     # 正常情况: LINEMOD 钻头直径约 200mm，所以值应该在 -100 到 +100 左右
 
                     # 2. 检查预测的 2D 点 (kp2d_pred)
+                    # 我们需要手动调用一次解码来看看中间结果
+                    kp2d_debug = self._decode_kp2d_from_output(pred_gpu)
                     if kp2d_pred_np is not None:
                         print(f"  > Pred kp2d (前3个): \n{kp2d_pred_np[:3]}")
                         print(f"  > Pred kp2d 范围: min={kp2d_pred_np.min():.2f}, max={kp2d_pred_np.max():.2f}")
@@ -531,14 +521,14 @@ class Evaluator:
                     print(f"  > K (0,0)={k_mat[0, 0]:.2f}, (0,2)={k_mat[0, 2]:.2f}")
 
                     # 4. 检查最终解算的姿态 (R, t)
-                    R_pred, t_pred = self._get_pose_from_output(pred_gpu, gt, kp2d_pred_np)
+                    R_pred, t_pred = self._get_pose_from_output(pred_gpu, gt)
                     print(f"  > 结果 R_pred:\n{R_pred}")
                     print(f"  > 结果 t_pred: {t_pred}")
                     # 正常情况: t_pred 应该是 [x, y, z]，z 大约在 500~1500 (mm) 之间
                     # 异常情况: 如果 z 是 3.0e+14，那就是 PnP 炸了
                 else:
                     # 正常运行
-                    R_pred, t_pred = self._get_pose_from_output(pred_gpu, gt, kp2d_pred_np)
+                    R_pred, t_pred = self._get_pose_from_output(pred_gpu, gt)
                 # --- DEBUG END ---
 
                 # 5. 组装 BOP 格式的 pred 和 gt 字典
@@ -754,8 +744,7 @@ class Evaluator:
                         num_votes=self.cfg.model.ransac_voting.vote_num,
                         inlier_thresh=self.cfg.model.ransac_voting.inlier_thresh,
                         max_trials=self.cfg.model.ransac_voting.max_trials,
-                        use_offset=self.use_offset,
-                        legacy_unit_voting=self.legacy_unit_voting,
+                        use_offset=self.use_offset
                     )
 
                 # 5) 取出 (K,2) 关键点坐标，转 numpy
@@ -822,7 +811,7 @@ class Evaluator:
             batch_gpu = move_to_device(batch, self.device)
 
             with torch.no_grad():
-                with torch.amp.autocast(device_type=self.device.type, enabled=self.use_amp):
+                with torch.amp.autocast(device_type='cuda', enabled=torch.cuda.is_available()):
                     outputs_gpu = self.model(batch_gpu['inp'])
 
             if 'vertex' not in outputs_gpu or 'seg' not in outputs_gpu:
@@ -852,8 +841,7 @@ class Evaluator:
                             num_votes=self.cfg.model.ransac_voting.vote_num,
                             inlier_thresh=self.cfg.model.ransac_voting.inlier_thresh,
                             max_trials=self.cfg.model.ransac_voting.max_trials,
-                            use_offset=self.use_offset,
-                            legacy_unit_voting=self.legacy_unit_voting,
+                            use_offset=self.use_offset
                         )
 
                     kp2d_pred_gtmask = kpts2d_gtmask_t[0].detach().cpu().numpy()  # (K, 2)
@@ -886,8 +874,7 @@ class Evaluator:
                             num_votes=self.cfg.model.ransac_voting.vote_num,
                             inlier_thresh=self.cfg.model.ransac_voting.inlier_thresh,
                             max_trials=self.cfg.model.ransac_voting.max_trials,
-                            use_offset=self.use_offset,
-                            legacy_unit_voting=self.legacy_unit_voting,
+                            use_offset=self.use_offset
                         )
 
                     kp2d_pred_predmask = kpts2d_predmask_t[0].detach().cpu().numpy()  # (K, 2)

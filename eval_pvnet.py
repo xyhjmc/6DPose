@@ -48,7 +48,7 @@ def main():
     parser = argparse.ArgumentParser(description="PVNet 评估主脚本")
     parser.add_argument("--config",
                         required=False,
-                        default="configs/pvnetplus_linemod_driller_all.yaml",
+                        default="configs/pvnet_linemod_driller_less.yaml",
                         type=str,
                         help="指向实验配置 .yaml 文件的路径 (例如: configs/pvnet_linemod_ape.yaml)")
 
@@ -63,10 +63,8 @@ def main():
                         help="保存详细 .json 评估结果的目录")
 
     parser.add_argument("--debug", default=False,action="store_true", help="运行单样本全流程调试，然后退出")
-    parser.add_argument("--debug_metrics", default=False, action="store_true",
+    parser.add_argument("--debug_metrics", default=True, action="store_true",
                         help="开启耗时的调试度量（PnP/ADD/投票实验）。默认关闭以加速评估。")
-    parser.add_argument("--legacy_unit_ransac", default=False, action="store_true",
-                        help="使用 use_offset=False 时的旧版（非向量化）RANSAC 实现。")
     args = parser.parse_args()
 
     # 加载配置 (cfg 是一个 SimpleNamespace)
@@ -78,18 +76,12 @@ def main():
             print("[配置提示] use_offset=False 时自动将 vertex_scale 重置为 1.0。")
         cfg.model.vertex_scale = 1.0
     cfg.model.use_offset = cfg.transforms.use_offset
-    if args.legacy_unit_ransac:
-        cfg.model.ransac_voting.legacy_unit_voting = True
 
     # --- 2. 设置 (Seed & Device) ---
     torch.manual_seed(cfg.seed)
     np.random.seed(cfg.seed)
     random.seed(cfg.seed)
     device = torch.device(cfg.device)
-    if device.type.startswith("cuda") and not torch.cuda.is_available():
-        print("[警告] 配置请求 CUDA，但当前环境不可用，自动切换到 CPU。")
-        device = torch.device("cpu")
-        cfg.device = "cpu"
 
     # --- 3. [评估] 数据增强 (Validation Transforms) ---
     # [关键] 验证集不使用任何随机增强 (没有 RandomAffine, RandomFlip, ColorJitter)
@@ -190,4 +182,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
