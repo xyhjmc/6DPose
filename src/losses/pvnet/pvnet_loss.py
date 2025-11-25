@@ -18,7 +18,12 @@ class PVNetLoss(nn.Module):
                  seg_loss_type: str = 'cross_entropy',
                  vote_loss_type: str = 'smooth_l1',
                  vote_weight: float = 1.0,
-                 seg_weight: float = 1.0):
+                 seg_weight: float = 1.0,
+                 seg_focal_gamma: float = 2.0,
+                 seg_focal_alpha=None,
+                 seg_class_weights=None,
+                 vote_normalize_eps: float = 0.0,
+                 skip_vote_if_no_fg: bool = False):
         """
         初始化 PVNet 损失。
 
@@ -32,13 +37,30 @@ class PVNetLoss(nn.Module):
 
         self.vote_weight = vote_weight
         self.seg_weight = seg_weight
+        self.seg_loss_type = seg_loss_type
+        self.seg_focal_gamma = seg_focal_gamma
+        self.skip_vote_if_no_fg = skip_vote_if_no_fg
+        self.vote_normalize_eps = vote_normalize_eps
+
+        if seg_class_weights is not None:
+            weight_tensor = torch.tensor(seg_class_weights, dtype=torch.float32)
+            self.register_buffer("seg_class_weights", weight_tensor)
+        else:
+            self.seg_class_weights = None
+
+        if seg_focal_alpha is not None:
+            alpha_tensor = torch.tensor(seg_focal_alpha, dtype=torch.float32)
+            self.register_buffer("seg_focal_alpha", alpha_tensor)
+        else:
+            self.seg_focal_alpha = None
 
         # --- 初始化分割损失 ---
         if seg_loss_type == 'cross_entropy':
             # PyTorch 的 CrossEntropyLoss 自动处理 LogSoftmax
             # 假设 seg_dim > 1 (例如 [背景, 前景])
-            self.seg_crit = nn.CrossEntropyLoss()
-        # (您未来可以在这里添加 'focal' 损失)
+            self.seg_crit = nn.CrossEntropyLoss(weight=self.seg_class_weights)
+        elif seg_loss_type == 'focal':
+            self.seg_crit = None  # 使用自定义 focal 计算
         else:
             raise NotImplementedError(f"不支持的分割损失: {seg_loss_type}")
 
@@ -77,7 +99,28 @@ class PVNetLoss(nn.Module):
 
         # --- 2. 分割损失 (Segmentation Loss) ---
         # (B, C_seg, H, W) vs (B, H, W)
-        seg_loss = self.seg_crit(seg_pred, mask_gt.long())
+        if self.seg_loss_type == 'cross_entropy':
+            seg_loss = self.seg_crit(seg_pred, mask_gt.long())
+        else:
+            # focal loss
+            ce_per_pixel = F.cross_entropy(
+                seg_pred,
+                mask_gt.long(),
+                reduction='none',
+                weight=self.seg_class_weights
+            )
+            probs = F.softmax(seg_pred, dim=1)
+            p_t = probs.gather(1, mask_gt.unsqueeze(1)).squeeze(1)
+
+            if self.seg_focal_alpha is None:
+                alpha_t = 1.0
+            elif self.seg_focal_alpha.numel() == 1:
+                alpha_t = self.seg_focal_alpha
+            else:
+                alpha_t = self.seg_focal_alpha[mask_gt]
+
+            focal_factor = torch.pow(1.0 - p_t, self.seg_focal_gamma)
+            seg_loss = (alpha_t * focal_factor * ce_per_pixel).mean()
 
         # --- 3. 顶点损失 (Vertex/Vote Loss) ---
 
@@ -86,7 +129,7 @@ class PVNetLoss(nn.Module):
         weight = mask_gt.unsqueeze(1).float()
 
         # 计算总共有多少个前景像素
-        num_fg_pixels = weight.sum().clamp(min=1.0)  # clamp(min=1.0) 防止除零
+        num_fg_pixels = weight.sum()
 
         # 获取通道数 (2K)
         num_channels = vertex_gt.shape[1]
@@ -95,9 +138,13 @@ class PVNetLoss(nn.Module):
         # (B, 2K, H, W) * (B, 1, H, W)
         vote_loss_sum = self.vote_crit(vertex_pred * weight, vertex_gt * weight)
 
-        # 归一化: (总损失 / 前景像素数) / 通道数
-        # 这与原始 clean-pvnet 的归一化方式一致
-        vote_loss = (vote_loss_sum / num_fg_pixels) / num_channels
+        if self.skip_vote_if_no_fg and num_fg_pixels.item() < 1e-6:
+            vote_loss = vote_loss_sum.new_zeros([])
+        else:
+            denom = num_fg_pixels.clamp(min=1.0) + self.vote_normalize_eps
+            # 归一化: (总损失 / 前景像素数) / 通道数
+            # 这与原始 clean-pvnet 的归一化方式一致
+            vote_loss = (vote_loss_sum / denom) / num_channels
 
         # --- 4. 总损失 ---
         total_loss = (self.seg_weight * seg_loss) + (self.vote_weight * vote_loss)
