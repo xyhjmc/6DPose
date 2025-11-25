@@ -39,7 +39,8 @@ class Trainer:
                  max_epochs: int,
                  log_interval: int = 10,
                  use_amp: bool = True,
-                 resume: bool = True):
+                 resume: bool = True,
+                 grad_clip_norm: float = 0.0):
 
         # ( ... __init__ 的其他部分保持不变 ... )
         self.model = model
@@ -53,6 +54,7 @@ class Trainer:
         self.checkpoint_dir = checkpoint_dir
         self.max_epochs = max_epochs
         self.log_interval = log_interval
+        self.grad_clip_norm = grad_clip_norm
 
         self.use_amp = use_amp and torch.cuda.is_available()
         # [修复] 使用 torch.amp.GradScaler 并指定 device_type
@@ -99,6 +101,9 @@ class Trainer:
 
             # 6. AMP 梯度缩放
             self.scaler.scale(total_loss).backward()
+            if self.grad_clip_norm and self.grad_clip_norm > 0:
+                self.scaler.unscale_(self.optimizer)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip_norm)
             self.scaler.step(self.optimizer)
             self.scaler.update()
 
