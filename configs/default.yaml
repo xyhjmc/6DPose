@@ -72,12 +72,13 @@ model:
 
 # --- 5. 损失函数参数 ---
 loss:
-  seg_loss_type: "cross_entropy"
+  seg_loss_type: "focal"
   seg_focal_gamma: 2.0
   seg_focal_alpha: null
   seg_class_weights: null
   seg_weight: 1.0
   vote_weight: 1.0
+  vote_smooth_l1_beta: 0.1
   vote_normalize_eps: 0.0
   skip_vote_if_no_fg: false
 
@@ -104,7 +105,7 @@ train:
   max_epochs: 100
   use_amp: true
   log_interval: 50
-  grad_clip_norm: 0.0
+  grad_clip_norm: 5.0
 
 # --- 9. 评估器参数 ---
 pnp:
