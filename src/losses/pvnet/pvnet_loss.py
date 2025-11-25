@@ -119,7 +119,12 @@ class PVNetLoss(nn.Module):
             if self.seg_focal_alpha is None:
                 alpha_t = 1.0
             elif self.seg_focal_alpha.numel() == 1:
-                alpha_t = self.seg_focal_alpha
+                # 对于二分类，前景使用 alpha，背景使用 (1 - alpha)
+                alpha_t = torch.where(
+                    mask_gt.bool(),
+                    self.seg_focal_alpha,
+                    1.0 - self.seg_focal_alpha
+                )
             else:
                 alpha_t = self.seg_focal_alpha[mask_gt]
 

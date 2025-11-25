@@ -66,7 +66,7 @@ model:
 
 # --- 5. 损失函数参数 ---
 loss:
-  seg_weight: 1.0
+  seg_weight: 10.0
   vote_weight: 1.0
 
 # --- 6. 优化器 ---
