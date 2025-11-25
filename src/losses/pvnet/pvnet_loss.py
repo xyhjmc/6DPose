@@ -15,7 +15,7 @@ class PVNetLoss(nn.Module):
     """
 
     def __init__(self,
-                 seg_loss_type: str = 'cross_entropy',
+                 seg_loss_type: str = 'focal',
                  vote_loss_type: str = 'smooth_l1',
                  vote_weight: float = 1.0,
                  seg_weight: float = 1.0,
@@ -23,15 +23,17 @@ class PVNetLoss(nn.Module):
                  seg_focal_alpha=None,
                  seg_class_weights=None,
                  vote_normalize_eps: float = 0.0,
+                 vote_smooth_l1_beta: float = 0.1,
                  skip_vote_if_no_fg: bool = False):
         """
         初始化 PVNet 损失。
 
         参数:
-          seg_loss_type: 分割损失类型 (例如 'cross_entropy' 或 'focal')。
+          seg_loss_type: 分割损失类型 (例如 'cross_entropy' 或 'focal')，默认使用 focal 以缓解前景/背景不平衡。
           vote_loss_type: 顶点损失类型 (例如 'smooth_l1')。
           vote_weight: 顶点损失的权重。
           seg_weight: 分割损失的权重。
+          vote_smooth_l1_beta: SmoothL1Loss 的 beta，缩小二次区间以防梯度过小。
         """
         super().__init__()
 
@@ -41,6 +43,7 @@ class PVNetLoss(nn.Module):
         self.seg_focal_gamma = seg_focal_gamma
         self.skip_vote_if_no_fg = skip_vote_if_no_fg
         self.vote_normalize_eps = vote_normalize_eps
+        self.vote_smooth_l1_beta = vote_smooth_l1_beta
 
         if seg_class_weights is not None:
             weight_tensor = torch.tensor(seg_class_weights, dtype=torch.float32)
@@ -67,7 +70,8 @@ class PVNetLoss(nn.Module):
         # --- 初始化顶点损失 ---
         if vote_loss_type == 'smooth_l1':
             # 我们使用 'sum' 归约，然后手动进行掩码归一化
-            self.vote_crit = nn.SmoothL1Loss(reduction='sum')
+            self.vote_crit = nn.SmoothL1Loss(beta=self.vote_smooth_l1_beta,
+                                            reduction='sum')
         else:
             raise NotImplementedError(f"不支持的顶点损失: {vote_loss_type}")
 

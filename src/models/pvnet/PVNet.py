@@ -103,6 +103,8 @@ class PVNet(nn.Module):
             nn.Conv2d(raw_dim, seg_dim + ver_dim, 1, 1)
         )
 
+        self._init_vertex_head()
+
         #  改进: 删除了 __init__ 中的 nn.UpsamplingBilinear2d 层。
         #       我们将在 forward 中使用 F.interpolate 进行动态上采样。
 
@@ -213,6 +215,17 @@ class PVNet(nn.Module):
             ret.update(decoded_output)
 
         return ret
+
+    def _init_vertex_head(self) -> None:
+        """将顶点回归头初始化为接近零的预测以提升收敛速度。"""
+
+        final_conv: nn.Conv2d = self.convraw[-1]
+        with torch.no_grad():
+            # 仅针对顶点通道应用小初始化，保持分割通道默认初始化。
+            vertex_weight = final_conv.weight[self.seg_dim:, ...]
+            vertex_bias = final_conv.bias[self.seg_dim:]
+            vertex_weight.zero_()
+            vertex_bias.zero_()
 
 
 # ======================================================

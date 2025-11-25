@@ -40,7 +40,7 @@ class Trainer:
                  log_interval: int = 10,
                  use_amp: bool = True,
                  resume: bool = True,
-                 grad_clip_norm: float = 0.0):
+                 grad_clip_norm: float = 5.0):
 
         # ( ... __init__ 的其他部分保持不变 ... )
         self.model = model

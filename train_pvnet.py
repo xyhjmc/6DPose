@@ -169,6 +169,7 @@ def main():
         seg_focal_alpha=getattr(cfg.loss, "seg_focal_alpha", None),
         seg_class_weights=getattr(cfg.loss, "seg_class_weights", None),
         vote_normalize_eps=getattr(cfg.loss, "vote_normalize_eps", 0.0),
+        vote_smooth_l1_beta=getattr(cfg.loss, "vote_smooth_l1_beta", 0.1),
         skip_vote_if_no_fg=getattr(cfg.loss, "skip_vote_if_no_fg", False)
     )
     loss_fn.to(device)
@@ -241,7 +242,7 @@ def main():
         log_interval=cfg.train.log_interval,
         use_amp=cfg.train.use_amp,
         resume=cfg.run.resume,
-        grad_clip_norm=getattr(cfg.train, "grad_clip_norm", 0.0)
+        grad_clip_norm=getattr(cfg.train, "grad_clip_norm", 5.0)
     )
 
     # --- 10. 启动训练！ ---
