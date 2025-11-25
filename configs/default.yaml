@@ -74,9 +74,9 @@ model:
 loss:
   seg_loss_type: "focal"
   seg_focal_gamma: 2.0
-  seg_focal_alpha: null
+  seg_focal_alpha: 0.75
   seg_class_weights: null
-  seg_weight: 1.0
+  seg_weight: 10.0
   vote_weight: 1.0
   vote_smooth_l1_beta: 0.1
   vote_normalize_eps: 0.0

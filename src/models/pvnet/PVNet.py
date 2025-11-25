@@ -224,7 +224,7 @@ class PVNet(nn.Module):
             # 仅针对顶点通道应用小初始化，保持分割通道默认初始化。
             vertex_weight = final_conv.weight[self.seg_dim:, ...]
             vertex_bias = final_conv.bias[self.seg_dim:]
-            vertex_weight.zero_()
+            vertex_weight.normal_(mean=0.0, std=0.001)
             vertex_bias.zero_()
 
 
