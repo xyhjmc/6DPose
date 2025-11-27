@@ -441,17 +441,17 @@ class RandomCropResize:
                     constant_values=0,
                 )
 
-            vertex_new = np.zeros((2 * num_kp, H_out, W_out), dtype=np.float32)
-            for i in range(num_kp):
-                vx = cv2.resize(vertex_crop[2 * i], (W_out, H_out), interpolation=cv2.INTER_LINEAR)
-                vy = cv2.resize(vertex_crop[2 * i + 1], (W_out, H_out), interpolation=cv2.INTER_LINEAR)
+            vertex_resized = cv2.resize(
+                vertex_crop.transpose(1, 2, 0),
+                (W_out, H_out),
+                interpolation=cv2.INTER_LINEAR,
+            ).transpose(2, 0, 1).astype(np.float32)
 
-                if self.use_offset:
-                    vx *= scale_w
-                    vy *= scale_h
-
-                vertex_new[2 * i] = vx
-                vertex_new[2 * i + 1] = vy
+            if self.use_offset:
+                scale = np.repeat([scale_w, scale_h], num_kp).reshape(2 * num_kp, 1, 1)
+                vertex_new = vertex_resized * scale
+            else:
+                vertex_new = vertex_resized
 
             if not self.use_offset:
                 v = vertex_new.reshape(num_kp, 2, H_out, W_out)
