@@ -165,6 +165,8 @@ def main():
         max_retry=1,
         max_aug_retry=1,
         debug_fallback=False,
+        fallback_resize_hw=tuple(cfg.transforms.input_size_hw),
+        fallback_use_offset=cfg.transforms.use_offset,
 
     )
     train_loader = DataLoader(
@@ -182,7 +184,9 @@ def main():
         data_dir=cfg.dataset.val_data_dir,
         transforms=val_transforms,
         split_name="val",
-        kp3d_path=getattr(cfg.dataset, "kp3d_path", None)
+        kp3d_path=getattr(cfg.dataset, "kp3d_path", None),
+        fallback_resize_hw=tuple(cfg.transforms.input_size_hw),
+        fallback_use_offset=cfg.transforms.use_offset,
     )
     val_loader = DataLoader(
         val_dataset,
