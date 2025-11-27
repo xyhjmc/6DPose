@@ -15,7 +15,9 @@ import numpy as np
 import cv2
 import torch
 from torch.utils.data import Dataset
-from typing import Optional, Callable, Dict, Any, List
+from typing import Optional, Callable, Dict, Any, List, Tuple
+
+from datasets.transforms import Resize
 
 
 class BopPvnetDataset(Dataset):
@@ -31,7 +33,9 @@ class BopPvnetDataset(Dataset):
         min_fg_ratio: float = 0.1,    # 增强后前景面积至少是原来的多少比例
         max_retry: int = 1,           # 读取样本失败时的最大重试次数（原来写在 __getitem__ 里）
         max_aug_retry: int = 1,# 同一样本增强重试次数
-        debug_fallback: bool = False
+        debug_fallback: bool = False,
+        fallback_resize_hw: Optional[Tuple[int, int]] = None,
+        fallback_use_offset: bool = True,
     ):
         super().__init__()
         self.data_dir = data_dir
@@ -44,6 +48,16 @@ class BopPvnetDataset(Dataset):
         self.max_retry = max_retry
         self.max_aug_retry = max_aug_retry
         self.debug_fallback = debug_fallback
+        self.fallback_resize_hw = fallback_resize_hw
+        self.fallback_use_offset = fallback_use_offset
+
+        # 当多次增强失败时，兜底使用一个“安全的”几何变换，至少保证尺寸一致
+        self._fallback_resize_transform = None
+        if self.fallback_resize_hw is not None:
+            self._fallback_resize_transform = Resize(
+                output_size_hw=self.fallback_resize_hw,
+                use_offset=self.fallback_use_offset,
+            )
 
         self.shared_kp3d: Optional[np.ndarray] = None
         self.kp3d_path = kp3d_path
@@ -229,8 +243,16 @@ class BopPvnetDataset(Dataset):
         """
         out: Dict[str, Any] = {}
 
+        # 先用“安全的” Resize 兜底，确保尺寸统一
+        sample_proc = copy.deepcopy(sample_raw)
+        if self._fallback_resize_transform is not None:
+            sample_proc = self._fallback_resize_transform(sample_proc)
+            # 如果 Resize 产出了新的 mask，就用它来覆盖 mask_raw_np，保证后续尺寸一致
+            if "mask" in sample_proc:
+                mask_raw_np = np.asarray(sample_proc["mask"])
+
         # ---- 1) image -> inp (CHW, float32 [0,1]) ----
-        image = sample_raw["image"]         # HWC, uint8
+        image = sample_proc["image"]         # HWC, uint8
         img_np = np.asarray(image, dtype=np.float32) / 255.0
         img_chw = img_np.transpose(2, 0, 1)     # (3, H, W)
         out["inp"] = torch.from_numpy(img_chw.astype(np.float32))
@@ -240,9 +262,9 @@ class BopPvnetDataset(Dataset):
             out["mask"] = torch.from_numpy(mask_raw_np.astype(np.uint8))
         else:
             # 兜底：从 sample_raw 里再找一次
-            if "mask" in sample_raw:
+            if "mask" in sample_proc:
                 out["mask"] = torch.from_numpy(
-                    np.asarray(sample_raw["mask"]).astype(np.uint8)
+                    np.asarray(sample_proc["mask"]).astype(np.uint8)
                 )
             elif "mask_visib" in sample_raw:
                 out["mask"] = torch.from_numpy(
@@ -250,22 +272,22 @@ class BopPvnetDataset(Dataset):
                 )
 
         # ---- 3) vertex ----
-        if "vertex" in sample_raw:
-            v_np = np.asarray(sample_raw["vertex"])
+        if "vertex" in sample_proc:
+            v_np = np.asarray(sample_proc["vertex"])
             out["vertex"] = torch.from_numpy(v_np.astype(np.float32))
 
         # ---- 4) kp2d / kp3d（注意命名对齐 collate_fn） ----
         # 2D keypoints
-        if "kp2d" in sample_raw:
-            kp2d_np = np.asarray(sample_raw["kp2d"])
+        if "kp2d" in sample_proc:
+            kp2d_np = np.asarray(sample_proc["kp2d"])
             out["kp2d"] = torch.from_numpy(kp2d_np.astype(np.float32))
         elif "kpt_2d" in sample_raw:
             kp2d_np = np.asarray(sample_raw["kpt_2d"])
             out["kp2d"] = torch.from_numpy(kp2d_np.astype(np.float32))
 
         # 3D keypoints
-        if "kp3d" in sample_raw:
-            kp3d_np = np.asarray(sample_raw["kp3d"])
+        if "kp3d" in sample_proc:
+            kp3d_np = np.asarray(sample_proc["kp3d"])
             out["kp3d"] = torch.from_numpy(kp3d_np.astype(np.float32))
         elif "kpt_3d" in sample_raw:
             kp3d_np = np.asarray(sample_raw["kpt_3d"])
@@ -273,13 +295,13 @@ class BopPvnetDataset(Dataset):
 
         # ---- 5) K / R / t ----
         for key in ["K", "R", "t"]:
-            if key in sample_raw:
-                arr = np.asarray(sample_raw[key])
+            if key in sample_proc:
+                arr = np.asarray(sample_proc[key])
                 out[key] = torch.from_numpy(arr.astype(np.float32))
 
         # ---- 6) meta 保留，用于后面 eval / debug ----
-        if "meta" in sample_raw:
-            out["meta"] = sample_raw["meta"]
+        if "meta" in sample_proc:
+            out["meta"] = sample_proc["meta"]
 
         return out
 
