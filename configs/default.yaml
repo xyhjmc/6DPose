@@ -42,6 +42,13 @@ transforms:
 
   input_size_hw: [256, 256] # (H, W) - ROI Patch 训练默认值
 
+  # ROI 裁剪配置
+  crop:
+    enabled: true
+    pad_scale_range: [1.1, 1.4]
+    jitter_ratio: 0.1
+    min_side: 32
+
   augmentation:
     degrees: 30.0
     scale_range: [0.8, 1.2]
