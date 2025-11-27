@@ -103,7 +103,8 @@ def main():
     val_dataset = BopPvnetDataset(
         data_dir=cfg.dataset.val_data_dir,
         transforms=val_transforms,
-        split_name="val"
+        split_name="val",
+        kp3d_path=getattr(cfg.dataset, "kp3d_path", None)
     )
 
     # 评估时 batch_size 可以设置得稍大，以加快速度

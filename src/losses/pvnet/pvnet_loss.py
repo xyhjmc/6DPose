@@ -22,7 +22,7 @@ class PVNetLoss(nn.Module):
                  seg_focal_gamma: float = 2.0,
                  seg_focal_alpha=None,
                  seg_class_weights=None,
-                 vote_normalize_eps: float = 0.0,
+                 vote_normalize_eps: float = 1e-6,
                  vote_smooth_l1_beta: float = 0.1,
                  skip_vote_if_no_fg: bool = False):
         """
@@ -140,9 +140,6 @@ class PVNetLoss(nn.Module):
         # 计算总共有多少个前景像素
         num_fg_pixels = weight.sum()
 
-        # 获取通道数 (2K)
-        num_channels = vertex_gt.shape[1]
-
         # 计算带权重的 L1 损失 (只在前景像素上)
         # (B, 2K, H, W) * (B, 1, H, W)
         vote_loss_sum = self.vote_crit(vertex_pred * weight, vertex_gt * weight)
@@ -151,9 +148,8 @@ class PVNetLoss(nn.Module):
             vote_loss = vote_loss_sum.new_zeros([])
         else:
             denom = num_fg_pixels.clamp(min=1.0) + self.vote_normalize_eps
-            # 归一化: (总损失 / 前景像素数) / 通道数
-            # 这与原始 clean-pvnet 的归一化方式一致
-            vote_loss = (vote_loss_sum / denom) / num_channels
+            # 归一化: (总损失 / 前景像素数)
+            vote_loss = vote_loss_sum / denom
 
         # --- 4. 总损失 ---
         total_loss = (self.seg_weight * seg_loss) + (self.vote_weight * vote_loss)

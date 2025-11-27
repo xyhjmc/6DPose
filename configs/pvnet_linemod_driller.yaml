@@ -20,6 +20,7 @@ dataset:
   # (假设 'ape' 的训练和验证 .npz 都在同一个目录)
   train_data_dir: "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet/driller"
   val_data_dir: "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet/driller_test"
+  kp3d_path: "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet/kps_000008.npy"
   num_workers: 8
   pin_memory: true
 
@@ -29,11 +30,11 @@ dataset:
     drop_last: true
 # --- 覆盖：模型参数 (如果需要) ---
 # --- 3. 数据增强与变换 ---
-transforms:
-  # [关键] 必须与 prepare_bop_dataset_pro.py 的设置匹配
-  use_offset: true # (用于 SmoothL1Loss)
+  transforms:
+    # [关键] 必须与 prepare_bop_dataset_pro.py 的设置匹配
+    use_offset: true # (用于 SmoothL1Loss)
 
-  input_size_hw: [480, 640] # (H, W)
+    input_size_hw: [256, 256] # (H, W)
 
   augmentation:
     degrees: 30.0

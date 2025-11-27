@@ -25,6 +25,7 @@ dataset:
   # [关键修改] 路径设为 null，强制在实验配置中覆盖
   train_data_dir: null # (必须覆盖!)
   val_data_dir: null   # (必须覆盖!)
+  kp3d_path: null      # (可选) 共享的 3D 关键点文件路径
 
   num_workers: 8
   pin_memory: true
@@ -39,7 +40,7 @@ transforms:
   # [关键] 必须与 prepare_bop_dataset_pro.py 的设置匹配
   use_offset: true # (用于 SmoothL1Loss)
 
-  input_size_hw: [480, 640] # (H, W)
+  input_size_hw: [256, 256] # (H, W) - ROI Patch 训练默认值
 
   augmentation:
     degrees: 30.0
@@ -61,8 +62,8 @@ model:
   ver_dim: 18 # (num_keypoints * 2)
   seg_dim: 2  # (背景, 前景)
 
-  # [新增] 顶点缩放因子，配合上面的代码使用
-  vertex_scale: 100.0
+  # 顶点缩放因子，ROI 模式下保持 1.0，更易于稳定训练
+  vertex_scale: 1.0
 
   ransac_voting:
     vote_num: 512
