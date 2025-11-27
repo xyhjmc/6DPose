@@ -290,6 +290,194 @@ class Resize:
 
 
 # --------------------------------------------------------------
+#   RandomCropResize（ROI 裁剪 + 缩放）
+# --------------------------------------------------------------
+
+
+def _compute_square_crop_from_mask(mask: np.ndarray,
+                                   pad_scale: float,
+                                   min_side: int,
+                                   jitter_ratio: float,
+                                   rng: random.Random) -> Tuple[int, int, int, int]:
+    """
+    基于前景 mask 计算方形裁剪框 (x1, y1, x2, y2)。
+    当 mask 全零时，返回以图像中心为中心的方框。
+    """
+    H, W = mask.shape[:2]
+    ys, xs = np.where(mask > 0)
+
+    if xs.size == 0 or ys.size == 0:
+        cx, cy = W / 2.0, H / 2.0
+        w = W
+        h = H
+    else:
+        x_min, x_max = xs.min(), xs.max()
+        y_min, y_max = ys.min(), ys.max()
+        cx = (x_min + x_max) / 2.0
+        cy = (y_min + y_max) / 2.0
+        w = x_max - x_min + 1
+        h = y_max - y_min + 1
+
+    side = int(np.ceil(max(w, h) * float(pad_scale)))
+    side = max(side, int(min_side))
+
+    if jitter_ratio > 1e-6:
+        jitter = side * float(jitter_ratio)
+        cx += rng.uniform(-jitter, jitter)
+        cy += rng.uniform(-jitter, jitter)
+
+    x1 = int(round(cx - side / 2.0))
+    y1 = int(round(cy - side / 2.0))
+    x2 = x1 + side
+    y2 = y1 + side
+
+    return x1, y1, x2, y2
+
+
+class RandomCropResize:
+    def __init__(
+        self,
+        output_size_hw: Tuple[int, int],
+        use_offset: bool,
+        pad_scale_range: Tuple[float, float] = (1.1, 1.4),
+        min_side: int = 32,
+        jitter_ratio: float = 0.1,
+    ):
+        self.output_size_hw = output_size_hw
+        self.use_offset = use_offset
+        self.pad_scale_min, self.pad_scale_max = pad_scale_range
+        self.min_side = min_side
+        self.jitter_ratio = jitter_ratio
+        self.rng = random.Random()
+
+    def __call__(self, sample: Dict[str, Any]) -> Dict[str, Any]:
+        img = sample['image']
+        mask = sample.get('mask', None)
+
+        if mask is None:
+            # 无 mask 时退化为 Resize
+            return Resize(self.output_size_hw, use_offset=self.use_offset)(sample)
+
+        H_out, W_out = self.output_size_hw
+        H_in, W_in = img.shape[:2]
+
+        pad_scale = self.rng.uniform(self.pad_scale_min, self.pad_scale_max)
+        x1, y1, x2, y2 = _compute_square_crop_from_mask(
+            mask,
+            pad_scale=pad_scale,
+            min_side=self.min_side,
+            jitter_ratio=self.jitter_ratio,
+            rng=self.rng,
+        )
+
+        x1_c = max(0, x1)
+        y1_c = max(0, y1)
+        x2_c = min(W_in, x2)
+        y2_c = min(H_in, y2)
+
+        # 裁剪 + 填充
+        crop_img = img[y1_c:y2_c, x1_c:x2_c]
+        crop_mask = mask[y1_c:y2_c, x1_c:x2_c]
+
+        pad_left = x1_c - x1
+        pad_top = y1_c - y1
+        pad_right = x2 - x2_c
+        pad_bottom = y2 - y2_c
+
+        if any(v > 0 for v in (pad_left, pad_top, pad_right, pad_bottom)):
+            crop_img = cv2.copyMakeBorder(
+                crop_img,
+                top=pad_top,
+                bottom=pad_bottom,
+                left=pad_left,
+                right=pad_right,
+                borderType=cv2.BORDER_REPLICATE,
+            )
+            crop_mask = cv2.copyMakeBorder(
+                crop_mask,
+                top=pad_top,
+                bottom=pad_bottom,
+                left=pad_left,
+                right=pad_right,
+                borderType=cv2.BORDER_CONSTANT,
+                value=0,
+            )
+
+        crop_h, crop_w = crop_img.shape[:2]
+        scale_w = W_out / float(crop_w)
+        scale_h = H_out / float(crop_h)
+
+        # 缩放 image & mask
+        sample['image'] = cv2.resize(crop_img, (W_out, H_out), interpolation=cv2.INTER_LINEAR)
+        sample['mask'] = cv2.resize(crop_mask.astype(np.uint8), (W_out, H_out), interpolation=cv2.INTER_NEAREST).astype(np.uint8)
+
+        # keypoints
+        if 'kp2d' in sample:
+            kp2d = sample['kp2d'].astype(np.float32).copy()
+            kp2d[:, 0] = (kp2d[:, 0] - x1) * scale_w
+            kp2d[:, 1] = (kp2d[:, 1] - y1) * scale_h
+            sample['kp2d'] = kp2d
+
+        # intrinsic
+        if 'K' in sample:
+            Kmat = sample['K'].astype(np.float32).copy()
+            Kmat[0, 0] *= scale_w
+            Kmat[1, 1] *= scale_h
+            Kmat[0, 2] = (Kmat[0, 2] - x1) * scale_w
+            Kmat[1, 2] = (Kmat[1, 2] - y1) * scale_h
+            sample['K'] = Kmat
+
+        # vertex
+        if 'vertex' in sample:
+            vertex = sample['vertex']
+            num_kp = vertex.shape[0] // 2
+            vertex_crop = vertex[:, y1_c:y2_c, x1_c:x2_c]
+
+            if any(v > 0 for v in (pad_left, pad_top, pad_right, pad_bottom)):
+                vertex_crop = np.pad(
+                    vertex_crop,
+                    ((0, 0), (pad_top, pad_bottom), (pad_left, pad_right)),
+                    mode='constant',
+                    constant_values=0,
+                )
+
+            vertex_new = np.zeros((2 * num_kp, H_out, W_out), dtype=np.float32)
+            for i in range(num_kp):
+                vx = cv2.resize(vertex_crop[2 * i], (W_out, H_out), interpolation=cv2.INTER_LINEAR)
+                vy = cv2.resize(vertex_crop[2 * i + 1], (W_out, H_out), interpolation=cv2.INTER_LINEAR)
+
+                if self.use_offset:
+                    vx *= scale_w
+                    vy *= scale_h
+
+                vertex_new[2 * i] = vx
+                vertex_new[2 * i + 1] = vy
+
+            if not self.use_offset:
+                v = vertex_new.reshape(num_kp, 2, H_out, W_out)
+                norm = np.linalg.norm(v, axis=1, keepdims=True)
+                norm[norm < 1e-8] = 1.0
+                v = v / norm
+                v *= (sample['mask'] > 0).astype(np.float32)[None, None, :, :]
+                vertex_new = v.reshape(2 * num_kp, H_out, W_out)
+            else:
+                vertex_new *= (sample['mask'] > 0).astype(np.float32)[None, :, :]
+
+            sample['vertex'] = vertex_new
+
+        # 在 meta 中记录裁剪信息（若存在）
+        if 'meta' in sample:
+            meta = sample['meta']
+            meta['crop_box'] = [int(x1), int(y1), int(x2), int(y2)]
+            meta['resize_scale'] = float(scale_h)
+            meta['orig_size'] = [int(H_in), int(W_in)]
+            meta['out_size'] = [int(H_out), int(W_out)]
+            sample['meta'] = meta
+
+        return sample
+
+
+# --------------------------------------------------------------
 #   ColorJitter（亮度/对比度/饱和度）
 # --------------------------------------------------------------
 

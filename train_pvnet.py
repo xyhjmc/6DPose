@@ -38,6 +38,7 @@ from datasets.transforms import (
     Compose,
     RandomAffine,
     RandomFlip,
+    RandomCropResize,
     Resize,
     ColorJitter,
     NormalizeAndToTensor
@@ -79,42 +80,80 @@ def main():
     # --- 3. 数据增强 (Transforms) ---
 
     # 训练集变换管道
-    train_transforms = Compose([
-        # 几何变换
+    crop_cfg = getattr(cfg.transforms, "crop", None)
+    crop_enabled = getattr(crop_cfg, "enabled", False) if crop_cfg is not None else False
+
+    train_geo_transforms = []
+    if crop_enabled:
+        pad_scale_range = getattr(crop_cfg, "pad_scale_range", [1.1, 1.4])
+        jitter_ratio = getattr(crop_cfg, "jitter_ratio", 0.1)
+        min_side = getattr(crop_cfg, "min_side", 32)
+        train_geo_transforms.append(
+            RandomCropResize(
+                output_size_hw=cfg.transforms.input_size_hw,
+                use_offset=cfg.transforms.use_offset,
+                pad_scale_range=tuple(pad_scale_range),
+                min_side=min_side,
+                jitter_ratio=jitter_ratio,
+            )
+        )
+
+    train_geo_transforms.extend([
         RandomAffine(
             degrees=cfg.transforms.augmentation.degrees,
             scale_range=cfg.transforms.augmentation.scale_range,
             use_offset=cfg.transforms.use_offset
         ),
         RandomFlip(p=cfg.transforms.augmentation.flip_p),
-
-        # 颜色变换
-        ColorJitter(
-            brightness=cfg.transforms.color_jitter.brightness,
-            contrast=cfg.transforms.color_jitter.contrast,
-            saturation=cfg.transforms.color_jitter.saturation
-        ),
-
-        # 缩放与格式化
-        Resize(output_size_hw=cfg.transforms.input_size_hw, use_offset=cfg.transforms.use_offset),
-        NormalizeAndToTensor(
-            mean=np.array(cfg.transforms.mean),
-            std=np.array(cfg.transforms.std),
-            vertex_scale = cfg.model.vertex_scale,
-            use_offset=cfg.transforms.use_offset
-        )
     ])
+
+    train_transforms = Compose(
+        train_geo_transforms + [
+            ColorJitter(
+                brightness=cfg.transforms.color_jitter.brightness,
+                contrast=cfg.transforms.color_jitter.contrast,
+                saturation=cfg.transforms.color_jitter.saturation
+            ),
+            # 缩放与格式化
+            Resize(output_size_hw=cfg.transforms.input_size_hw, use_offset=cfg.transforms.use_offset)
+            if not crop_enabled else lambda x: x,
+            NormalizeAndToTensor(
+                mean=np.array(cfg.transforms.mean),
+                std=np.array(cfg.transforms.std),
+                vertex_scale = cfg.model.vertex_scale,
+                use_offset=cfg.transforms.use_offset
+            )
+        ]
+    )
 
     # 验证集变换管道 (没有随机增强)
-    val_transforms = Compose([
-        Resize(output_size_hw=cfg.transforms.input_size_hw, use_offset=cfg.transforms.use_offset),
-        NormalizeAndToTensor(
-            mean=np.array(cfg.transforms.mean),
-            std=np.array(cfg.transforms.std),
-            vertex_scale = cfg.model.vertex_scale,
-            use_offset=cfg.transforms.use_offset
+    val_geo_transforms = []
+    if crop_enabled:
+        pad_scale_range = getattr(crop_cfg, "pad_scale_range", [1.1, 1.4])
+        min_side = getattr(crop_cfg, "min_side", 32)
+        pad_scale = float(pad_scale_range[0]) if len(pad_scale_range) > 0 else 1.0
+        val_geo_transforms.append(
+            RandomCropResize(
+                output_size_hw=cfg.transforms.input_size_hw,
+                use_offset=cfg.transforms.use_offset,
+                pad_scale_range=(pad_scale, pad_scale),
+                min_side=min_side,
+                jitter_ratio=0.0,
+            )
         )
-    ])
+
+    val_transforms = Compose(
+        val_geo_transforms + [
+            Resize(output_size_hw=cfg.transforms.input_size_hw, use_offset=cfg.transforms.use_offset)
+            if not crop_enabled else (lambda x: x),
+            NormalizeAndToTensor(
+                mean=np.array(cfg.transforms.mean),
+                std=np.array(cfg.transforms.std),
+                vertex_scale = cfg.model.vertex_scale,
+                use_offset=cfg.transforms.use_offset
+            )
+        ]
+    )
 
     # --- 4. 数据集 (Datasets) & 加载器 (DataLoaders) ---
     print(f"加载训练集: {cfg.dataset.train_data_dir}")
