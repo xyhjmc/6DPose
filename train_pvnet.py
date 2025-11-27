@@ -122,6 +122,7 @@ def main():
         data_dir=cfg.dataset.train_data_dir,
         transforms=train_transforms,
         split_name="train",
+        kp3d_path=getattr(cfg.dataset, "kp3d_path", None),
         max_retry=1,
         max_aug_retry=1,
         debug_fallback=False,
@@ -141,7 +142,8 @@ def main():
     val_dataset = BopPvnetDataset(
         data_dir=cfg.dataset.val_data_dir,
         transforms=val_transforms,
-        split_name="val"
+        split_name="val",
+        kp3d_path=getattr(cfg.dataset, "kp3d_path", None)
     )
     val_loader = DataLoader(
         val_dataset,

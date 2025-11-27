@@ -25,6 +25,7 @@ class BopPvnetDataset(Dataset):
         data_dir: str,
         transforms: Optional[Callable] = None,
         split_name: str = "train",
+        kp3d_path: Optional[str] = None,
         # ==== 新增：fallback 相关参数 ====
         min_fg_pixels: int = 10,      # 前景最少像素数阈值
         min_fg_ratio: float = 0.1,    # 增强后前景面积至少是原来的多少比例
@@ -43,6 +44,14 @@ class BopPvnetDataset(Dataset):
         self.max_retry = max_retry
         self.max_aug_retry = max_aug_retry
         self.debug_fallback = debug_fallback
+
+        self.shared_kp3d: Optional[np.ndarray] = None
+        self.kp3d_path = kp3d_path
+        if kp3d_path is not None:
+            if not os.path.exists(kp3d_path):
+                raise FileNotFoundError(f"kp3d_path 不存在: {kp3d_path}")
+            self.shared_kp3d = np.load(kp3d_path).astype(np.float32)
+            print(f"[{split_name}] 使用共享 kp3d 文件: {kp3d_path}")
 
         index_path = os.path.join(data_dir, "index.json")
         if not os.path.exists(index_path):
@@ -97,7 +106,10 @@ class BopPvnetDataset(Dataset):
                 data = np.load(npz_path, allow_pickle=True)
 
                 rgb_path = self._resolve_rgb_path(data["rgb_path"])
-                image = cv2.imread(rgb_path, cv2.IMREAD_COLOR)
+                if "crop_image" in data:
+                    image = np.asarray(data["crop_image"])
+                else:
+                    image = cv2.imread(rgb_path, cv2.IMREAD_COLOR)
                 if image is None:
                     raise RuntimeError(f"无法读取图像：{rgb_path}")
 
@@ -122,6 +134,8 @@ class BopPvnetDataset(Dataset):
 
                 # 构建 sample 字典（先是 np / 原始数据）
                 sample = {k: v for k, v in data.items()}
+                if self.shared_kp3d is not None:
+                    sample["kp3d"] = self.shared_kp3d
                 sample["image"] = image
                 sample["meta"] = {
                     "npz_file": meta["file"],
@@ -131,6 +145,12 @@ class BopPvnetDataset(Dataset):
                     "scene_id": int(data['scene_id'].item()),
                     "im_id": int(data['im_id'].item())
                 }
+
+                for opt_key in ["crop_box", "resize_scale", "orig_size", "out_size"]:
+                    if opt_key in data:
+                        sample["meta"][opt_key] = data[opt_key].tolist()
+                if self.shared_kp3d is not None:
+                    sample["meta"]["kp3d_path"] = self.kp3d_path
 
                 # ---------------------------
                 # 2) 应用 transforms + fallback

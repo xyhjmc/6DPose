@@ -224,6 +224,113 @@ def make_vertex_map_from_kps(kp2d: np.ndarray, mask: np.ndarray, use_offset: boo
     return vertex
 
 
+def compute_square_crop(mask: np.ndarray,
+                        pad_scale: float = 1.2,
+                        min_side: int = 16) -> Optional[Tuple[int, int, int, int]]:
+    """
+    根据 mask 计算方形裁剪框 (x1, y1, x2, y2)。
+
+    - pad_scale: 在最小外接矩形的基础上放大多少倍。
+    - min_side:  最小边长，避免过于极端的小框。
+    """
+    ys, xs = np.where(mask > 0)
+    if xs.size == 0 or ys.size == 0:
+        return None
+
+    x_min, x_max = xs.min(), xs.max()
+    y_min, y_max = ys.min(), ys.max()
+
+    w = x_max - x_min + 1
+    h = y_max - y_min + 1
+    side = int(np.ceil(max(w, h) * float(pad_scale)))
+    side = max(side, int(min_side))
+
+    cx = (x_min + x_max) / 2.0
+    cy = (y_min + y_max) / 2.0
+
+    x1 = int(round(cx - side / 2.0))
+    y1 = int(round(cy - side / 2.0))
+    x2 = x1 + side
+    y2 = y1 + side
+
+    return x1, y1, x2, y2
+
+
+def crop_and_resize_sample(image: np.ndarray,
+                           mask: np.ndarray,
+                           kp2d: np.ndarray,
+                           K: np.ndarray,
+                           crop_box: Tuple[int, int, int, int],
+                           output_size: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
+    """
+    将 image/mask/kp2d/K 同步裁剪为方形并缩放到固定大小。
+
+    返回裁剪后的 (image, mask, kp2d, K) 以及 meta 信息。
+    """
+    x1, y1, x2, y2 = crop_box
+    H, W = image.shape[:2]
+
+    x1_clamped = max(0, x1)
+    y1_clamped = max(0, y1)
+    x2_clamped = min(W, x2)
+    y2_clamped = min(H, y2)
+
+    # 裁剪
+    crop_img = image[y1_clamped:y2_clamped, x1_clamped:x2_clamped]
+    crop_mask = mask[y1_clamped:y2_clamped, x1_clamped:x2_clamped]
+
+    # 如果裁剪超出边界，用边界值填充
+    pad_left = x1_clamped - x1
+    pad_top = y1_clamped - y1
+    pad_right = x2 - x2_clamped
+    pad_bottom = y2 - y2_clamped
+    if any(v > 0 for v in (pad_left, pad_top, pad_right, pad_bottom)):
+        crop_img = cv2.copyMakeBorder(
+            crop_img,
+            top=pad_top,
+            bottom=pad_bottom,
+            left=pad_left,
+            right=pad_right,
+            borderType=cv2.BORDER_REPLICATE,
+        )
+        crop_mask = cv2.copyMakeBorder(
+            crop_mask,
+            top=pad_top,
+            bottom=pad_bottom,
+            left=pad_left,
+            right=pad_right,
+            borderType=cv2.BORDER_CONSTANT,
+            value=0,
+        )
+
+    # 尺寸与相机参数缩放
+    side = max(crop_img.shape[:2])
+    scale = float(output_size) / float(side)
+    new_img = cv2.resize(crop_img, (output_size, output_size), interpolation=cv2.INTER_LINEAR)
+    new_mask = cv2.resize(crop_mask.astype(np.uint8), (output_size, output_size), interpolation=cv2.INTER_NEAREST)
+
+    new_kp2d = kp2d.copy()
+    new_kp2d[:, 0] -= x1
+    new_kp2d[:, 1] -= y1
+    new_kp2d[:, 0] *= scale
+    new_kp2d[:, 1] *= scale
+
+    new_K = K.copy()
+    new_K[0, 0] *= scale
+    new_K[1, 1] *= scale
+    new_K[0, 2] = (new_K[0, 2] - x1) * scale
+    new_K[1, 2] = (new_K[1, 2] - y1) * scale
+
+    crop_meta = {
+        "crop_box": np.array([x1, y1, x2, y2], dtype=np.int32),
+        "resize_scale": np.array(scale, dtype=np.float32),
+        "orig_size": np.array([H, W], dtype=np.int32),
+        "out_size": np.array([output_size, output_size], dtype=np.int32),
+    }
+
+    return new_img, new_mask, new_kp2d.astype(np.float32), new_K.astype(np.float32), crop_meta
+
+
 def render_mask_from_mesh(mesh_verts, mesh_faces, R, t, K, H, W) -> np.ndarray:
     """
     [可选] 使用 pyrender 渲染二值掩码。
@@ -276,6 +383,9 @@ def process_instance_task(task: Dict[str, Any]) -> Dict[str, Any]:
         render_if_no_mask = task['render_if_no_mask']
         # [改进] 只接收 model_path，而不是完整的 mesh 数据
         model_path = task.get('model_path', None)
+        crop_size = task.get('crop_size', None)
+        crop_padding = task.get('crop_padding', 1.2)
+        store_crop_image = task.get('store_crop_image', False)
 
         # [修复 1] 解包我们新添加的 ID
         obj_id = task['obj_id']
@@ -317,26 +427,50 @@ def process_instance_task(task: Dict[str, Any]) -> Dict[str, Any]:
         # --- 4. 计算 2D 关键点 ---
         kp2d = project_points(kp3d, R, t, K)  # (K, 2)
 
-        # --- 5. [核心] 计算顶点场 ---
-        vertex = make_vertex_map_from_kps(kp2d, mask, use_offset=use_offset)
+        # --- 5. 可选 ROI 裁剪 ---
+        crop_meta = {}
+        img_for_save = img
+        mask_for_save = mask
+        kp2d_for_save = kp2d
+        K_for_save = K
+
+        if crop_size is not None:
+            crop_box = compute_square_crop(mask, pad_scale=crop_padding, min_side=8)
+            if crop_box is None:
+                crop_box = (0, 0, W, H)
+
+            img_for_save, mask_for_save, kp2d_for_save, K_for_save, crop_meta = crop_and_resize_sample(
+                img, mask, kp2d, K, crop_box=crop_box, output_size=crop_size
+            )
+
+        # --- 6. [核心] 计算顶点场 ---
+        vertex = make_vertex_map_from_kps(kp2d_for_save, mask_for_save, use_offset=use_offset)
 
         # --- 6. 保存 .npz ---
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
-        np.savez_compressed(
-            out_path,
-            kp2d=kp2d.astype(np.float32),
+        save_kwargs = dict(
+            kp2d=kp2d_for_save.astype(np.float32),
             kp3d=kp3d.astype(np.float32),
-            K=K.astype(np.float32),
+            K=K_for_save.astype(np.float32),
             vertex=vertex.astype(np.float32),
-            mask=mask.astype(np.uint8),
+            mask=mask_for_save.astype(np.uint8),
             rgb_path=rgb_path,  # 存储相对/绝对路径，供 DataLoader 使用
             R=R.astype(np.float32),
             t=t.astype(np.float32),
             # [修复 2] 将 ID 保存到 .npz 文件中
-            obj_id = np.array(obj_id, dtype=np.int32),
-            scene_id = np.array(scene_id, dtype=np.int32),
-            im_id = np.array(im_id, dtype=np.int32)
+            obj_id=np.array(obj_id, dtype=np.int32),
+            scene_id=np.array(scene_id, dtype=np.int32),
+            im_id=np.array(im_id, dtype=np.int32),
         )
+
+        for opt_key in ["crop_box", "resize_scale", "orig_size", "out_size"]:
+            if crop_meta.get(opt_key) is not None:
+                save_kwargs[opt_key] = crop_meta[opt_key]
+
+        if store_crop_image or crop_size is not None:
+            save_kwargs["crop_image"] = img_for_save
+
+        np.savez_compressed(out_path, **save_kwargs)
 
         # 成功返回
         return {'status': 'ok', 'out_path': out_path, 'task': task}
@@ -352,7 +486,10 @@ def process_instance_task(task: Dict[str, Any]) -> Dict[str, Any]:
 # -------------------------
 def build_tasks(data_root: str, split: str, obj_id: int, out_dir: str,
                 kp3d: np.ndarray, use_offset: bool, render_if_no_mask: bool,
-                model_path: str, logger: logging.Logger) -> List[Dict[str, Any]]:
+                model_path: str, logger: logging.Logger,
+                crop_size: Optional[int] = None,
+                crop_padding: float = 1.2,
+                store_crop_image: bool = False) -> List[Dict[str, Any]]:
     """
     [任务构建器]
     遍历 BOP 目录结构，为*每一个*需要处理的物体实例构建一个 'task' 字典。
@@ -437,6 +574,9 @@ def build_tasks(data_root: str, split: str, obj_id: int, out_dir: str,
                     'use_offset': use_offset,
                     'render_if_no_mask': render_if_no_mask,
                     'model_path': model_path,  # [改进] 只传递路径
+                    'crop_size': crop_size,
+                    'crop_padding': crop_padding,
+                    'store_crop_image': store_crop_image,
                     # [修复] 添加这三个 ID
                     'obj_id': obj_id,
                     'scene_id': int(scene),
@@ -714,7 +854,11 @@ def parse_args():
     p.add_argument("--out-dir", required=False, default="/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet/driller_all",help="output directory for .npz files")
     p.add_argument("--num-kp", type=int, default=9, help="number of keypoints K")
     p.add_argument("--kp3d-path", default=None, help="optional .npy with (K,3) keypoints")
+    p.add_argument("--kps-save-path", default=None, help="path to save/reuse FPS keypoints (kps_<obj_id>.npy)")
     p.add_argument("--use-offset", default=False,action='store_true', help="generate offset maps (pixel units) instead of unit vectors")
+    p.add_argument("--crop-size", type=int, default=None, help="if set, crop ROI to a fixed square resolution (e.g., 256)")
+    p.add_argument("--crop-padding", type=float, default=1.2, help="padding ratio applied to the tight bbox when cropping")
+    p.add_argument("--store-crop-image", action='store_true', help="store cropped RGB into npz to avoid runtime cropping")
     p.add_argument("--render-if-no-mask", action='store_true', help="use pyrender to render mask if not found")
     p.add_argument("--model-file", default=None, help="override model file path (obj_xxxxxx.ply) if needed")
     p.add_argument("--num-workers", type=int, default=8, help="number of worker processes")
@@ -775,35 +919,51 @@ def main():
         logger.info(f"使用 3D 模型: {model_path}")
 
     # --- 3. [修复] 加载或计算 3D 关键点 (kp3d) ---
+    default_kps_path = args.kps_save_path
+    if default_kps_path is None:
+        default_kps_path = os.path.join(args.out_dir, f"kps_{args.obj_id:06d}.npy")
+
     kp3d = None
-    if args.kp3d_path:
+    if default_kps_path and os.path.exists(default_kps_path):
+        try:
+            kp3d = np.load(default_kps_path).astype(np.float32)
+            logger.info(f"从共享关键点文件加载: {default_kps_path}")
+        except Exception as e:
+            logger.warning(f"加载共享关键点失败，尝试其它来源: {e}")
+
+    if kp3d is None and args.kp3d_path:
         try:
             kp3d = np.load(args.kp3d_path).astype(np.float32)
-            if kp3d.ndim != 2 or kp3d.shape[1] != 3:
-                logger.error(f"--kp3d_path ({args.kp3d_path}) 必须是 (N, 3) numpy 数组。")
-                return
-            logger.info(f"从 {args.kp3d_path} 加载了 {kp3d.shape[0]} 个 3D 关键点。")
+            logger.info(f"从 --kp3d_path 加载关键点: {args.kp3d_path}")
         except Exception as e:
             logger.error(f"加载 --kp3d_path ({args.kp3d_path}) 失败: {e}")
             return
-    else:
-        # Fallback: 自动计算 8 角点 + 质心
-        logger.info("未提供 --kp3d_path，将自动计算 8 个角点 + 质心 (需要 Trimesh)。")
-        if trimesh is None:
-            logger.error("Trimesh 未安装，无法自动计算关键点。请 `pip install trimesh` 或提供 --kp3d_path。")
-            return
+
+    if kp3d is None:
+        logger.info("未找到现成关键点文件，将使用最远点采样 (FPS) 生成。")
         if model_path is None:
             logger.error("无法计算关键点，因为找不到 3D 模型。")
             return
         try:
-            m = trimesh.load(model_path)
-            corners = m.bounding_box.vertices  # (8, 3)
-            centroid = m.centroid  # (3,)
-            kp3d = np.vstack([corners, centroid])
-            logger.info(f"自动计算了 {kp3d.shape[0]} 个 3D 关键点 (8 角点 + 质心)。")
+            verts, _ = load_mesh_verts_faces(model_path)
+            kp3d = farthest_point_sampling(verts, args.num_kp)
+            logger.info(f"FPS 生成 {kp3d.shape[0]} 个关键点。")
         except Exception as e:
-            logger.error(f"使用 Trimesh 计算关键点失败: {e}")
+            logger.error(f"使用 FPS 计算关键点失败: {e}")
             return
+
+    if kp3d.ndim != 2 or kp3d.shape[1] != 3:
+        logger.error(f"关键点形状错误: 期望 (N,3), 实际 {kp3d.shape}")
+        return
+
+    # 保存统一关键点文件，确保 train/test 一致
+    if default_kps_path:
+        try:
+            os.makedirs(os.path.dirname(default_kps_path), exist_ok=True)
+            np.save(default_kps_path, kp3d.astype(np.float32))
+            logger.info(f"已将关键点写入 {default_kps_path}")
+        except Exception as e:
+            logger.warning(f"保存共享关键点失败: {e}")
 
     # 确保关键点数量符合要求
     if kp3d.shape[0] < args.num_kp:
@@ -817,7 +977,10 @@ def main():
             tasks = build_tasks(args.data_root, args.dataset_split, args.obj_id, args.out_dir,
                                 kp3d=kp3d, use_offset=args.use_offset,
                                 render_if_no_mask=args.render_if_no_mask,
-                                model_path=model_path, logger=logger)
+                                model_path=model_path, logger=logger,
+                                crop_size=args.crop_size,
+                                crop_padding=args.crop_padding,
+                                store_crop_image=args.store_crop_image)
     except Exception as e:
         logger.exception("构建任务列表时发生致命错误，退出。")
         return
