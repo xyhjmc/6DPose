@@ -40,6 +40,7 @@ from src.engines.evaluator import Evaluator
 # 模型加载工具
 from src.utils.train_model_utils import load_network
 from debug_full_pipeline import run_full_debug
+from src.utils.model_stats import summarize_model_stats
 
 
 
@@ -126,6 +127,19 @@ def main():
     model = build_model_from_cfg(cfg)
     model.to(device)
 
+    # 统计模型参数与 FLOPs
+    try:
+        input_h, input_w = cfg.transforms.input_size_hw
+        model_stats = summarize_model_stats(model, (1, 3, input_h, input_w), device)
+        print(
+            f"模型参数量: {model_stats['param_millions']:.3f} M "
+            f"({int(model_stats['param_count'])} 参数)"
+        )
+        print(f"单次前向计算量: {model_stats['gflops']:.3f} GFLOPs")
+    except Exception as e:
+        model_stats = None
+        print(f"[警告] 无法统计模型参数/FLOPs: {e}")
+
     # --- 6. [核心] 加载训练好的权重 ---
     checkpoint_path = os.path.join(cfg.run.checkpoint_dir, args.checkpoint)
     if not os.path.exists(checkpoint_path):
@@ -171,6 +185,11 @@ def main():
     summary = evaluator.evaluate()
 
     print("\n--- 评估完成 ---")
+    if model_stats is not None:
+        print(
+            f"模型参数量: {model_stats['param_millions']:.3f} M | "
+            f"计算量: {model_stats['gflops']:.3f} GFLOPs"
+        )
     print("最终指标概要:")
     print(json.dumps(summary, indent=4))
 
