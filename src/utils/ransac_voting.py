@@ -265,8 +265,8 @@ def ransac_voting_torch(mask: torch.Tensor,
                         max_trials: int = 200,
                         replace: bool = False,
                         seed: Optional[int] = None,
-                        use_offset: bool = True,
-                        vectorized_unit: bool = False) -> Tuple[torch.Tensor, torch.Tensor]:
+                        use_offset: bool = False,
+                        vectorized_unit: bool = True) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     [PyTorch/GPU版] RANSAC 投票 (向量化实现)。
 

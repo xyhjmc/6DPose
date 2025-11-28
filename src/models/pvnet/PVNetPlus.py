@@ -142,6 +142,8 @@ class PVNetPlus(nn.Module):
 
     @torch.no_grad()
     def decode_keypoint(self, seg_pred: torch.Tensor, vertex_pred: torch.Tensor) -> dict:
+        kpt_2d = None  # 初始化默认值
+        inlier_counts = None  # 初始化默认值
         if self.seg_dim == 1:
             mask_bin = (torch.sigmoid(seg_pred) > 0.5).float()
         else:

@@ -48,7 +48,7 @@ def main():
     parser = argparse.ArgumentParser(description="PVNet 评估主脚本")
     parser.add_argument("--config",
                         required=False,
-                        default="configs/pvnet_linemod_driller_less.yaml",
+                        default="configs/pvnetplus_linemod_driller_less_crop128.yaml",
                         type=str,
                         help="指向实验配置 .yaml 文件的路径 (例如: configs/pvnet_linemod_ape.yaml)")
 
