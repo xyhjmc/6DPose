@@ -45,6 +45,7 @@ from datasets.transforms import (
 )
 # 训练引擎
 from src.engines.trainer import Trainer
+from src.utils.model_stats import summarize_model_stats
 
 
 def main():
@@ -204,6 +205,19 @@ def main():
     model = build_model_from_cfg(cfg)
     model.to(device)
 
+    # 在训练开始前统计模型规模
+    model_stats = None
+    try:
+        input_h, input_w = cfg.transforms.input_size_hw
+        model_stats = summarize_model_stats(model, (1, 3, input_h, input_w), device)
+        print(
+            f"模型参数量: {model_stats['param_millions']:.3f} M "
+            f"({int(model_stats['param_count'])} 参数)"
+        )
+        print(f"单次前向计算量: {model_stats['gflops']:.3f} GFLOPs")
+    except Exception as e:
+        print(f"[警告] 无法统计模型参数/FLOPs: {e}")
+
     # --- 6. 损失函数 (Loss Function) ---
     # [接口对齐]
     loss_fn = PVNetLoss(
@@ -294,6 +308,11 @@ def main():
     print(f"--- 训练开始 (Config: {args.config}) ---")
     trainer.run()
     print(f"--- 训练完成 ---")
+    if model_stats is not None:
+        print(
+            f"模型参数量: {model_stats['param_millions']:.3f} M | "
+            f"计算量: {model_stats['gflops']:.3f} GFLOPs"
+        )
 
 
 if __name__ == "__main__":
