@@ -1,0 +1,74 @@
+# YOLO-PVNet 针对 LINEMOD driller 的示例配置
+# 继承 default.yaml，切换模型为 YoloPVNet，并使用 YOLO11 作为主干网络。
+
+defaults:
+  - default
+
+run:
+  log_dir: "./logs/yolopvnet_linemod_driller_mini"
+  checkpoint_dir: "./checkpoints/yolopvnet_linemod_driller_mini"
+
+# 数据集设置：保持与现有 mini 示例一致
+# 注意：请将 data_root、train_data_dir、val_data_dir 修改为你本地的路径。
+dataset:
+  data_root: "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet"
+  train_data_dir: "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet/driller_mini"
+  val_data_dir: "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet/driller_test"
+  num_workers: 8
+  pin_memory: true
+  loader:
+    batch_size: 8
+    shuffle: true
+    drop_last: true
+
+transforms:
+  use_offset: True
+  input_size_hw: [480, 640]
+  augmentation:
+    degrees: 15
+    scale_range: [0.9, 1.1]
+    flip_p: 0.2
+  color_jitter:
+    brightness: 0.3
+    contrast: 0.25
+    saturation: 0.25
+  mean: [0.485, 0.456, 0.406]
+  std: [0.229, 0.224, 0.225]
+
+model:
+  name: "YoloPVNet"
+  num_keypoints: 9
+  ver_dim: 18
+  seg_dim: 2
+  vertex_scale: 100.0
+  obj_id: 8
+  ransac_voting:
+    vote_num: 1280
+    inlier_thresh: 3.0
+    max_trials: 320
+  yolo:
+    cfg_path: "src/models/yolo/yolo11.yaml"
+    variant: "n"  # [n, s, m, l, x]
+    decoder_dims: [256, 192, 160]
+
+loss:
+  seg_weight: 0.5
+  vote_weight: 3.5
+
+optimizer:
+  type: "Adam"
+  lr: 0.001
+  weight_decay: 0.0001
+
+scheduler:
+  type: "MultiStepLR"
+  milestones: [24, 30]
+  gamma: 0.1
+
+train:
+  max_epochs: 36
+  use_amp: true
+  log_interval: 25
+
+pnp:
+  reproj_error_thresh: 10
