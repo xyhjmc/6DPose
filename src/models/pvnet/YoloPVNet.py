@@ -116,7 +116,21 @@ class YOLO11Backbone(nn.Module):
         if module_cls in {Conv, C3k2, SPPF, C2PSA}:
             c2 = self._width(args[0])
             new_args = [c1, c2] + args[1:]
-            mod = nn.Sequential(*[module_cls(*new_args) for _ in range(n)]) if n > 1 else module_cls(*new_args)
+
+            if n > 1:
+                # When stacking depth-repeated blocks (e.g., C3k2), the output
+                # channels of the first block become the input channels of all
+                # subsequent blocks. Reusing the original ``c1`` for every block
+                # breaks larger YOLO variants (l/x) where ``c1 != c2``. Align the
+                # channels after the first block to preserve the correct tensor
+                # shapes across repeats.
+                blocks = [module_cls(*new_args)]
+                repeat_args = [c2, c2] + args[1:]
+                blocks.extend(module_cls(*repeat_args) for _ in range(n - 1))
+                mod = nn.Sequential(*blocks)
+            else:
+                mod = module_cls(*new_args)
+
             return mod, c2
 
         if module_cls is Concat:
