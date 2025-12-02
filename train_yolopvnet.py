@@ -14,6 +14,7 @@
 import argparse
 import os
 import random
+from types import SimpleNamespace
 
 import numpy as np
 import torch
@@ -209,9 +210,22 @@ def main():
         type=str,
         help="指向实验配置 .yaml 文件的路径",
     )
+    parser.add_argument(
+        "--variant",
+        required=False,
+        choices=["n", "s", "m", "l", "x"],
+        help="覆盖配置文件中的 YOLO 主干尺度（n/s/m/l/x）",
+    )
     args = parser.parse_args()
 
     cfg = load_config(args.config)
+
+    if args.variant:
+        if getattr(cfg.model, "yolo", None) is None:
+            cfg.model.yolo = SimpleNamespace()
+        cfg.model.yolo.variant = args.variant
+    if getattr(cfg.model, "yolo", None) is not None:
+        print(f"使用的 YOLO 主干尺度: {getattr(cfg.model.yolo, 'variant', 'n')}")
 
     if not cfg.transforms.use_offset:
         if getattr(cfg.model, "vertex_scale", 1.0) != 1.0:
