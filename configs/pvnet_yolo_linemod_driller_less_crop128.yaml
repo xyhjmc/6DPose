@@ -1,0 +1,100 @@
+# YOLO-PVNet 配置：使用离线裁剪的 128x128 ROI 数据
+# 参考 pvnet_linemod_driller_less_crop128.yaml，调整模型为 YoloPVNet
+
+defaults:
+  - default
+
+# --- 路径设置 ---
+run:
+  log_dir: "./logs/yolopvnet_linemod_driller_less_crop128_aug"
+  checkpoint_dir: "./checkpoints/yolopvnet_linemod_driller_less_crop128_aug"
+
+# --- 数据集 ---
+dataset:
+  data_root: "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet"
+  train_data_dir: "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet/driller_less_crop128"
+  val_data_dir: "/home/xyh/PycharmProjects/6DPose/data/linemod_pvnet/driller_test_crop128"
+
+  num_workers: 8
+  pin_memory: true
+
+  loader:
+    batch_size: 32      # Crop 后图像变小(128x128)，Batch Size 可以开大，BN 更稳
+    shuffle: true
+    drop_last: true
+
+# --- 变换 ---
+transforms:
+  use_offset: False       # 与离线裁剪的方向场匹配，不回归像素偏移
+  input_size_hw: [128, 128] # 与离线裁剪输出尺寸一致
+
+  crop:
+    enabled: False        # 已离线裁剪成 128x128，不再在线裁剪
+
+  augmentation:
+    degrees: 10
+    scale_range: [0.9, 1.1]
+    flip_p: 0
+
+  color_jitter:
+    brightness: 0.4
+    contrast: 0.2
+    saturation: 0.2
+
+  mean: [0.485, 0.456, 0.406]
+  std: [0.229, 0.224, 0.225]
+
+# --- 模型 ---
+model:
+  name: "YoloPVNet"
+  num_keypoints: 9
+  ver_dim: 18
+  seg_dim: 2
+
+  vertex_scale: 100.0    # 与 pvnet 裁剪配置保持一致
+  obj_id: 8
+
+  ransac_voting:
+    vote_num: 512        # 128x128 图较小，512 个投票点足够
+    inlier_thresh: 2     # 适配方向场输出的内点阈值
+    max_trials: 100
+
+  yolo:
+    cfg_path: "src/models/yolo/yolo11.yaml"
+    variant: "n"  # 可选 [n, s, m, l, x]
+    decoder_dims: [256, 192, 160]
+
+# --- 损失函数 ---
+loss:
+  seg_loss_type: "focal"
+  seg_focal_gamma: 2.0
+  seg_focal_alpha: 0.75
+
+  seg_weight: 10.0
+  vote_weight: 1.0
+
+  vote_smooth_l1_beta: 1.0
+  skip_vote_if_no_fg: true
+
+# --- 优化器 ---
+optimizer:
+  type: "Adam"
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+
+# --- 调度器 ---
+scheduler:
+  type: "MultiStepLR"
+  milestones: [80, 100, 120]
+  gamma: 0.1
+
+# --- 训练 ---
+train:
+  max_epochs: 140
+  use_amp: true
+  log_interval: 50
+  grad_clip_norm: 5.0
+
+# --- 评估 ---
+pnp:
+  reproj_error_thresh: 5.0
