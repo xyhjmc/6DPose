@@ -7,6 +7,7 @@ from typing import Any
 
 from src.models.pvnet.PVNet import PVNet
 from src.models.pvnet.PVNetPlus import PVNetPlus
+from src.models.pvnet.YoloPVNet import YoloPVNet
 
 
 def _get_attr(ns: Any, name: str, default: Any):
@@ -43,5 +44,14 @@ def build_model_from_cfg(cfg) -> PVNet:
 
     if name == "pvnet":
         return PVNet(**common_kwargs)
+
+    if name in {"yolopvnet", "pvnet_yolo"}:
+        yolo_cfg = getattr(model_cfg, "yolo", None)
+        yolo_kwargs = dict(
+            backbone_cfg=_get_attr(yolo_cfg, "cfg_path", "src/models/yolo/yolo11.yaml"),
+            variant=_get_attr(yolo_cfg, "variant", "n"),
+            decoder_dims=_get_attr(yolo_cfg, "decoder_dims", (256, 192, 160)),
+        )
+        return YoloPVNet(**common_kwargs, **yolo_kwargs)
 
     raise ValueError(f"Unsupported model name: {model_cfg.name}")

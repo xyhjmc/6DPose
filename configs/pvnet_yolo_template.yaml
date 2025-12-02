@@ -1,0 +1,24 @@
+# Example config for YOLO-backed PVNet.
+# Inherit values from configs/default.yaml if you are using a config composition
+# system, or copy fields as needed for your experiment.
+
+seed: 42
+device: "cuda"
+
+model:
+  name: "YoloPVNet"
+  num_keypoints: 9
+  ver_dim: 18
+  seg_dim: 2
+  vertex_scale: 1.0
+  ransac_voting:
+    vote_num: 512
+    inlier_thresh: 2.0
+    max_trials: 200
+  yolo:
+    cfg_path: "src/models/yolo/yolo11.yaml"
+    variant: "n"  # choose from [n, s, m, l, x]
+    decoder_dims: [256, 192, 160]
+
+# Remaining sections (dataset, transforms, loss, optimizer, etc.) should follow
+# configs/default.yaml and be customized for your experiment.
