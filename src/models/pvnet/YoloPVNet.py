@@ -126,7 +126,16 @@ class YOLO11Backbone(nn.Module):
             return mod, c2
 
         if module_cls is nn.Upsample:
-            mod = module_cls(*args)
+            # Avoid passing a placeholder ``None`` as the ``size`` argument because
+            # ``torch.nn.functional.interpolate`` will raise when both ``size`` and
+            # ``scale_factor`` are defined. The YAML uses ``None`` to indicate that
+            # only the ``scale_factor`` should be provided, so we drop the first
+            # argument when it is ``None``.
+            if args and args[0] is None:
+                _, scale, *rest = args
+                mod = module_cls(scale_factor=scale, *rest)
+            else:
+                mod = module_cls(*args)
             return mod, c1
 
         raise ValueError(f"Unsupported module type in YOLO11 builder: {module_cls}")
