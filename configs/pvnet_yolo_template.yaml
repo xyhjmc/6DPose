@@ -19,6 +19,7 @@ model:
     cfg_path: "src/models/yolo/yolo11.yaml"
     variant: "n"  # choose from [n, s, m, l, x]
     decoder_dims: [256, 192, 160]
+    pretrained: null  # e.g., "weights/yolo11n.pt"; only backbone+neck layers are loaded
 
 # Remaining sections (dataset, transforms, loss, optimizer, etc.) should follow
 # configs/default.yaml and be customized for your experiment.

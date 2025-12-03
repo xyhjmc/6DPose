@@ -51,6 +51,7 @@ def build_model_from_cfg(cfg) -> PVNet:
             backbone_cfg=_get_attr(yolo_cfg, "cfg_path", "src/models/yolo/yolo11.yaml"),
             variant=_get_attr(yolo_cfg, "variant", "n"),
             decoder_dims=_get_attr(yolo_cfg, "decoder_dims", (256, 192, 160)),
+            pretrained=_get_attr(yolo_cfg, "pretrained", None),
         )
         return YoloPVNet(**common_kwargs, **yolo_kwargs)
 

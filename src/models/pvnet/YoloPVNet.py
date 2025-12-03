@@ -9,7 +9,7 @@ incremental path to experiment with YOLO backbones.
 """
 import math
 from pathlib import Path
-from typing import Any, Dict, List, Sequence, Tuple, Union
+from typing import Any, Dict, List, Mapping, Sequence, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -51,6 +51,48 @@ class YOLO11Backbone(nn.Module):
         self.variant = variant
         self.depth_gain, self.width_gain, self.max_channels = self._get_scale()
         (self.model, self.froms, self.channels, self.feature_indices,) = self._build_model()
+
+    def load_pretrained(self, weight_path: Union[str, Path]) -> Dict[str, int]:
+        """Load official YOLO11 weights while filtering out Detect heads.
+
+        Args:
+            weight_path: Path to a YOLO11 checkpoint (e.g., ``yolo11n.pt``).
+
+        Returns:
+            A summary dictionary containing counts of loaded, missing, and skipped
+            parameters.
+        """
+
+        ckpt = torch.load(weight_path, map_location="cpu")
+
+        if isinstance(ckpt, Mapping):
+            if "model" in ckpt and hasattr(ckpt["model"], "state_dict"):
+                state_dict = ckpt["model"].state_dict()
+            elif "ema" in ckpt and hasattr(ckpt["ema"], "state_dict"):
+                state_dict = ckpt["ema"].state_dict()
+            elif "state_dict" in ckpt:
+                state_dict = ckpt["state_dict"]
+            else:
+                state_dict = {k: v for k, v in ckpt.items() if isinstance(v, torch.Tensor)}
+        elif hasattr(ckpt, "state_dict"):
+            state_dict = ckpt.state_dict()
+        else:
+            raise ValueError(f"无法从 {weight_path} 中解析权重。")
+
+        own_state = self.state_dict()
+        filtered_state = {
+            k: v for k, v in state_dict.items() if k in own_state and own_state[k].shape == v.shape
+        }
+
+        missing = sorted(set(own_state.keys()) - set(filtered_state.keys()))
+        skipped = sorted(set(state_dict.keys()) - set(filtered_state.keys()))
+        self.load_state_dict(filtered_state, strict=False)
+
+        return {
+            "loaded": len(filtered_state),
+            "missing": len(missing),
+            "skipped": len(skipped),
+        }
 
     def _get_scale(self) -> Tuple[float, float, int]:
         scale_cfg = self.cfg.get("scales", {})
@@ -197,6 +239,7 @@ class YoloPVNet(nn.Module):
         seg_dim: int,
         backbone_cfg: Union[str, Path] = Path("src/models/yolo/yolo11.yaml"),
         variant: str = "n",
+        pretrained: Union[str, Path, None] = None,
         vote_num: int = 512,
         inlier_thresh: float = 2.0,
         max_trials: int = 200,
@@ -216,6 +259,12 @@ class YoloPVNet(nn.Module):
 
         # Backbone + neck
         self.backbone = YOLO11Backbone(cfg_path=backbone_cfg, variant=variant)
+        if pretrained is not None:
+            load_info = self.backbone.load_pretrained(pretrained)
+            print(
+                f"[YOLO] 加载预训练权重 {pretrained}: "
+                f"loaded={load_info['loaded']}, missing={load_info['missing']}, skipped={load_info['skipped']}"
+            )
         f_indices = self.backbone.feature_indices
         c3, c4, c5 = (self.backbone.channels[idx] for idx in f_indices)
         d8, d4, d2 = decoder_dims
