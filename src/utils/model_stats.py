@@ -32,22 +32,28 @@ def estimate_flops(model: nn.Module, input_shape: Tuple[int, int, int, int], dev
         Estimated number of floating point operations for a single forward pass.
     """
     was_training = model.training
+    decode_flag = getattr(model, "decode_in_eval", None)
     model.eval()
+    if decode_flag is not None:
+        model.decode_in_eval = False  # ensure backbone + decoder are profiled, skip heavy postprocess
 
     dummy_input = torch.randn(input_shape, device=device)
     flops = 0
 
     activities = _get_profiler_activities(device)
 
-    with torch.no_grad(), profile(activities=activities, record_shapes=True, with_flops=True) as prof:
-        model(dummy_input)
+    try:
+        with torch.no_grad(), profile(activities=activities, record_shapes=True, with_flops=True) as prof:
+            model(dummy_input)
 
-    for evt in prof.key_averages():
-        if evt.flops is not None:
-            flops += int(evt.flops)
-
-    if was_training:
-        model.train()
+        for evt in prof.key_averages():
+            if evt.flops is not None:
+                flops += int(evt.flops)
+    finally:
+        if decode_flag is not None:
+            model.decode_in_eval = decode_flag
+        if was_training:
+            model.train()
 
     return flops
 
