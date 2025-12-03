@@ -7,7 +7,9 @@ segmentation masks and vertex fields.
 The goal is API compatibility with the existing PVNet family while providing an
 incremental path to experiment with YOLO backbones.
 """
+import importlib.util
 import math
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Sequence, Tuple, Union
 
@@ -26,6 +28,45 @@ from src.models.yolo.yoloblocks import (
 from src.utils.ransac_voting import ransac_voting
 
 LayerDef = Sequence[Any]
+
+
+def _allow_ultralytics_detection_stub() -> None:
+    """Whitelist ``DetectionModel`` so PyTorch can unpickle official YOLO weights.
+
+    PyTorch 2.6 defaults to ``weights_only=True`` in :func:`torch.load`, which
+    restricts the classes allowed during unpickling. YOLO checkpoints store a
+    ``ultralytics.nn.tasks.DetectionModel`` object, so we register either the
+    real class (if the package is available) or a lightweight stub to satisfy
+    unpickling without installing the ``ultralytics`` dependency.
+    """
+
+    detection_model = None
+    if importlib.util.find_spec("ultralytics") is not None:
+        from ultralytics.nn.tasks import DetectionModel  # type: ignore
+
+        detection_model = DetectionModel
+    else:
+        from types import ModuleType
+
+        ultralytics = ModuleType("ultralytics")
+        nn_mod = ModuleType("ultralytics.nn")
+        tasks_mod = ModuleType("ultralytics.nn.tasks")
+
+        class DetectionModel(torch.nn.Module):
+            def __init__(self, *args: Any, **kwargs: Any) -> None:
+                super().__init__()
+
+        tasks_mod.DetectionModel = DetectionModel
+        nn_mod.tasks = tasks_mod
+        ultralytics.nn = nn_mod  # type: ignore[attr-defined]
+
+        sys.modules["ultralytics"] = ultralytics
+        sys.modules["ultralytics.nn"] = nn_mod
+        sys.modules["ultralytics.nn.tasks"] = tasks_mod
+
+        detection_model = DetectionModel
+
+    torch.serialization.add_safe_globals([detection_model])
 
 
 def _make_divisible(x: float, divisor: int = 8) -> int:
@@ -63,6 +104,7 @@ class YOLO11Backbone(nn.Module):
             parameters.
         """
 
+        _allow_ultralytics_detection_stub()
         ckpt = torch.load(weight_path, map_location="cpu")
 
         if isinstance(ckpt, Mapping):
